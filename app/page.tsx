@@ -77,7 +77,6 @@ export default function Home() {
     <div className="min-h-screen bg-slate-950 text-slate-100 bg-[radial-gradient(ellipse_80%_80%_at_50%_-20%,rgba(120,119,198,0.15),rgba(255,255,255,0))]">
       <div className="max-w-5xl mx-auto px-6 py-10 md:py-16">
         
-        {/* Topbar / Header */}
         <header className="flex flex-col md:flex-row justify-between items-start md:items-center mb-12 pb-6 border-b border-slate-800/80 gap-4">
           <div>
             <div className="flex items-center gap-3">
@@ -106,7 +105,6 @@ export default function Home() {
           )}
         </header>
 
-        {/* Area de Dropzone */}
         <div
           onDragEnter={handleDrag}
           onDragOver={handleDrag}
@@ -163,10 +161,8 @@ export default function Home() {
           </div>
         </div>
 
-        {/* Dashboard de Resultados */}
         {transacaoLista.length > 0 && (
           <div className="space-y-8 animate-fade-in">
-            {/* Cards Indicadores */}
             <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
               <div className="bg-gradient-to-b from-slate-900/80 to-slate-900/40 border border-slate-800/80 p-6 rounded-2xl backdrop-blur-xl relative overflow-hidden group">
                 <div className="absolute top-0 left-0 w-1 h-full bg-rose-500"></div>
@@ -185,7 +181,6 @@ export default function Home() {
               </div>
             </div>
 
-            {/* Tabela de Lancamentos */}
             <div className="bg-slate-900/50 border border-slate-800/80 rounded-2xl overflow-hidden backdrop-blur-xl shadow-2xl">
               <div className="px-6 py-5 border-b border-slate-800/80 flex justify-between items-center bg-slate-900/30">
                 <h2 className="font-bold text-slate-100 text-base">Lancamento Encontrado</h2>
