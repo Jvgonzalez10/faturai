@@ -9,7 +9,7 @@ interface Transacao {
 }
 
 export default function Home() {
-  const [transacoes, setTransacoes] = useState<Transacao[]>([]);
+  const [transacaoLista, setTransacaoLista] = useState<Transacao[]>([]);
   const [loading, setLoading] = useState(false);
   const [dragActive, setDragActive] = useState(false);
   const [fileName, setFileName] = useState<string | null>(null);
@@ -34,7 +34,7 @@ export default function Home() {
 
       const result = await res.json();
       if (result.success && result.dados) {
-        setTransacoes(result.dados);
+        setTransacaoLista(result.dados);
       } else {
         alert('Nao foi possivel processar a fatura. Tente outro arquivo.');
       }
@@ -70,8 +70,8 @@ export default function Home() {
     }
   };
 
-  const totalGasto = transacoes.reduce((acc, curr) => acc + curr.valor, 0);
-  const maiorGasto = transacoes.length > 0 ? Math.max(...transacoes.map((t) => t.valor)) : 0;
+  const totalGasto = transacaoLista.reduce((acc, curr) => acc + curr.valor, 0);
+  const maiorGasto = transacaoLista.length > 0 ? Math.max(...transacaoLista.map((t) => t.valor)) : 0;
 
   return (
     <div className="max-w-6xl mx-auto px-4 py-8 md:py-12">
@@ -84,19 +84,19 @@ export default function Home() {
             <h1 className="text-2xl font-bold tracking-tight text-white">FaturAi</h1>
           </div>
           <p className="text-slate-400 text-sm mt-1">
-            Gestao visual e inteligencia de faturas de cartao
+            Gestao visual e inteligencia de fatura de cartao
           </p>
         </div>
 
-        {transacoes.length > 0 && (
+        {transacaoLista.length > 0 && (
           <button
             onClick={() => {
-              setTransacoes([]);
+              setTransacaoLista([]);
               setFileName(null);
             }}
             className="text-xs bg-slate-800 hover:bg-slate-700 text-slate-300 font-medium px-4 py-2 rounded-lg border border-slate-700 transition"
           >
-            Limpar Dados
+            Limpar Dado
           </button>
         )}
       </header>
@@ -145,21 +145,20 @@ export default function Home() {
                 'Arraste a fatura em PDF aqui ou clique para selecionar'
               )}
             </p>
-            <p className="text-xs text-slate-500 mt-1">Suporta arquivos PDF de faturas de cartao de credito</p>
+            <p className="text-xs text-slate-500 mt-1">Suporta arquivo PDF de fatura de cartao de credito</p>
           </div>
 
           {loading && (
             <div className="flex items-center space-x-2 text-blue-400 font-medium text-xs pt-2">
               <span className="animate-spin rounded-full h-4 w-4 border-2 border-blue-400 border-t-transparent"></span>
-              <span>Processando e extraindo lancamentos...</span>
+              <span>Processando e extraindo lancamento...</span>
             </div>
           )}
         </div>
       </div>
 
-      {transacoes.length > 0 && (
+      {transacaoLista.length > 0 && (
         <div className="space-y-8 animate-fade-in">
-          {/* Cards Resumo */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="bg-slate-800/60 border border-slate-700/60 p-5 rounded-xl">
               <p className="text-xs font-medium text-slate-400">Total da Fatura</p>
@@ -176,12 +175,11 @@ export default function Home() {
             </div>
           </div>
 
-          {/* Tabela de Lancamentos */}
           <div className="bg-slate-800/40 border border-slate-800 rounded-xl overflow-hidden backdrop-blur-sm">
             <div className="px-6 py-4 border-b border-slate-800 flex justify-between items-center">
-              <h2 className="font-semibold text-slate-200">Lancamentos Encontrados</h2>
+              <h2 className="font-semibold text-slate-200">Lancamento Encontrado</h2>
               <span className="text-xs bg-slate-800 text-slate-400 px-2.5 py-1 rounded-full border border-slate-700">
-                {transacoes.length} itens
+                {transacaoLista.length} item
               </span>
             </div>
 
@@ -195,7 +193,7 @@ export default function Home() {
                   </tr>
                 </thead>
                 <tbody className="divide-y divide-slate-800/60">
-                  {transacoes.map((item, index) => (
+                  {transacaoLista.map((item, index) => (
                     <tr key={index} className="hover:bg-slate-800/30 transition">
                       <td className="px-6 py-3.5 whitespace-nowrap text-slate-400 font-mono text-xs">
                         {item.data}
