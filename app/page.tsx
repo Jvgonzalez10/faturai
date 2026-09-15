@@ -16,7 +16,7 @@ export default function Home() {
 
   const processFile = async (file: File) => {
     if (!file || file.type !== 'application/pdf') {
-      alert('Por favor, envie um arquivo PDF válido.');
+      alert('Por favor, envie um arquivo PDF valido.');
       return;
     }
 
@@ -36,10 +36,10 @@ export default function Home() {
       if (result.success && result.dados) {
         setTransacoes(result.dados);
       } else {
-        alert('Não foi possível processar a fatura. Tente outro arquivo.');
+        alert('Nao foi possivel processar a fatura. Tente outro arquivo.');
       }
     } catch (err) {
-      alert('Erro de conexão ao enviar o arquivo.');
+      alert('Erro de conexao ao enviar o arquivo.');
     } finally {
       setLoading(false);
     }
@@ -72,11 +72,9 @@ export default function Home() {
 
   const totalGasto = transacoes.reduce((acc, curr) => acc + curr.valor, 0);
   const maiorGasto = transacoes.length > 0 ? Math.max(...transacoes.map((t) => t.valor)) : 0;
-  const ticketMedio = transacoes.length > 0 ? totalGasto / transacoes.length : 0;
 
   return (
     <div className="max-w-6xl mx-auto px-4 py-8 md:py-12">
-      {/* Cabeçalho */}
       <header className="flex flex-col md:flex-row justify-between items-start md:items-center mb-10 pb-6 border-b border-slate-800 gap-4">
         <div>
           <div className="flex items-center gap-2">
@@ -86,7 +84,7 @@ export default function Home() {
             <h1 className="text-2xl font-bold tracking-tight text-white">FaturAi</h1>
           </div>
           <p className="text-slate-400 text-sm mt-1">
-            Gestão visual e inteligência de faturas de cartão
+            Gestao visual e inteligencia de faturas de cartao
           </p>
         </div>
 
@@ -103,7 +101,6 @@ export default function Home() {
         )}
       </header>
 
-      {/* Área de Dropzone */}
       <div
         onDragEnter={handleDrag}
         onDragOver={handleDrag}
@@ -148,23 +145,22 @@ export default function Home() {
                 'Arraste a fatura em PDF aqui ou clique para selecionar'
               )}
             </p>
-            <p className="text-xs text-slate-500 mt-1">Suporta arquivos PDF de faturas de cartão de crédito</p>
+            <p className="text-xs text-slate-500 mt-1">Suporta arquivos PDF de faturas de cartao de credito</p>
           </div>
 
           {loading && (
             <div className="flex items-center space-x-2 text-blue-400 font-medium text-xs pt-2">
               <span className="animate-spin rounded-full h-4 w-4 border-2 border-blue-400 border-t-transparent"></span>
-              <span>Processando e extraindo lançamentos...</span>
+              <span>Processando e extraindo lancamentos...</span>
             </div>
           )}
         </div>
       </div>
 
-      {/* Painel de Resultados */}
       {transacoes.length > 0 && (
         <div className="space-y-8 animate-fade-in">
           {/* Cards Resumo */}
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="bg-slate-800/60 border border-slate-700/60 p-5 rounded-xl">
               <p className="text-xs font-medium text-slate-400">Total da Fatura</p>
               <p className="text-2xl font-bold text-red-400 mt-1">
@@ -173,24 +169,17 @@ export default function Home() {
             </div>
 
             <div className="bg-slate-800/60 border border-slate-700/60 p-5 rounded-xl">
-              <p className="text-xs font-medium text-slate-400">Maior Lançamento</p>
+              <p className="text-xs font-medium text-slate-400">Maior Lancamento</p>
               <p className="text-2xl font-bold text-amber-400 mt-1">
                 R$ {maiorGasto.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
               </p>
             </div>
-
-            <div className="bg-slate-800/60 border border-slate-700/60 p-5 rounded-xl">
-              <p className="text-xs font-medium text-slate-400">Ticket Médio</p>
-              <p className="text-2xl font-bold text-blue-400 mt-1">
-                R$ {ticketMedio.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-              </p>
-            </div>
           </div>
 
-          {/* Tabela de Lançamentos */}
+          {/* Tabela de Lancamentos */}
           <div className="bg-slate-800/40 border border-slate-800 rounded-xl overflow-hidden backdrop-blur-sm">
             <div className="px-6 py-4 border-b border-slate-800 flex justify-between items-center">
-              <h2 className="font-semibold text-slate-200">Lançamentos Encontrados</h2>
+              <h2 className="font-semibold text-slate-200">Lancamentos Encontrados</h2>
               <span className="text-xs bg-slate-800 text-slate-400 px-2.5 py-1 rounded-full border border-slate-700">
                 {transacoes.length} itens
               </span>
