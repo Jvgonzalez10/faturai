@@ -15,14 +15,11 @@ export async function POST(request: Request) {
     const arrayBuffer = await file.arrayBuffer();
     const buffer = new Uint8Array(arrayBuffer);
 
-    // Extracao de texto compativel com o ambiente Serverless da Vercel
     const { text } = await extractText(buffer);
     const fullText = Array.isArray(text) ? text.join('\n') : text;
 
     if (!fullText || fullText.trim().length === 0) {
-      return NextResponse.json({
-        error: 'Nenhum texto foi encontrado no PDF. Verifique se o arquivo nao e uma imagem digitalizada.',
-      }, { status: 400 });
+      return NextResponse.json({ error: 'Nenhum texto foi encontrado no PDF.' }, { status: 400 });
     }
 
     const lines = fullText
@@ -32,52 +29,41 @@ export async function POST(request: Request) {
 
     const transacoes: Array<{ data: string; descricao: string; valor: number }> = [];
 
-    // Regex para datas (DD/MM ou DD/MM/AAAA)
-    const regexData = /(\d{2}\/\d{2}(?:\/\d{2,4})?)/;
-    
-    // Regex para valores financeiros brasileiros (ex: 15,90 ou 1.250,00)
-    const regexValor = /([\d\.]+\,\d{2})/;
+    // Captura a data exata no inicio da linha (formato DD/MM)
+    const regexLinhaComprada = /^(\d{2}\/\d{2})\s+(.+?)\s+([\d\.]+\,\d{2})$/;
 
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
 
-      // Ignora cabecalhos e totais de pagamentos de faturas anteriores
+      // Ignora cabecalhos e resumos da fatura
       if (
         line.includes('Pagamento via conta') ||
         line.includes('Total dos pagamentos') ||
         line.includes('PAGAMENTO EFETUADO') ||
-        line.includes('RESUMO DA FATURA')
+        line.includes('RESUMO DA FATURA') ||
+        line.includes('Vencimento') ||
+        line.includes('Total desta fatura')
       ) {
         continue;
       }
 
-      // 1. Tenta encontrar Data, Descricao e Valor na mesma linha
-      const matchData = line.match(regexData);
-      const matchValor = line.match(regexValor);
+      const match = line.match(regexLinhaComprada);
 
-      if (matchData && matchValor) {
-        const data = matchData[1];
-        const valorStr = matchValor[1];
+      if (match) {
+        const [_, data, desc, valorStr] = match;
 
-        // Extrai o que sobrou da linha como descricao
-        let descricao = line
-          .replace(data, '')
-          .replace(valorStr, '')
-          .replace(/R\$/g, '')
-          .trim();
-
-        // Se a descricao ficou vazia na mesma linha, busca na linha seguinte
-        if (!descricao && lines[i + 1]) {
-          descricao = lines[i + 1].trim();
+        // Valida se nao e um titulo de cabecalho
+        if (desc.includes('ESTABELECIMENTO') || desc.includes('VALOR')) {
+          continue;
         }
 
         const valorClean = valorStr.replace(/\./g, '').replace(',', '.');
         const valor = parseFloat(valorClean);
 
-        if (!isNaN(valor) && valor > 0 && descricao.length > 1) {
+        if (!isNaN(valor) && valor > 0 && desc.length > 1) {
           transacoes.push({
             data,
-            descricao,
+            descricao: desc.trim(),
             valor,
           });
         }
@@ -91,9 +77,6 @@ export async function POST(request: Request) {
     });
   } catch (error) {
     console.error('Erro no processamento do PDF:', error);
-    return NextResponse.json(
-      { error: 'Erro interno ao processar a fatura.' },
-      { status: 500 }
-    );
+    return NextResponse.json({ error: 'Erro interno ao processar a fatura.' }, { status: 500 });
   }
 }
