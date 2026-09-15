@@ -1,5 +1,5 @@
 export const metadata = {
-  title: 'FaturAí',
+  title: 'FaturAi',
   description: 'Leitor e contabilizador de faturas de cartão de crédito',
 };
 
