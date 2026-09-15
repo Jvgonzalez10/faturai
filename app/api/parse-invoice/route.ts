@@ -29,9 +29,9 @@ export async function POST(request: Request) {
 
     const transacaoLista: Array<{ data: string; descricao: string; valor: number }> = [];
 
-    // Formato de data comum em faturas: DD/MM ou DD/MM/AAAA
-    const regexData = /^(\d{2}\/\d{2}(?:\/\d{2,4})?)/;
-    // Captura apenas valores monetarios validos no final da linha (ex: 123,45 ou -123,45)
+    // Captura apenas data DD/MM no inicio da linha
+    const regexData = /^(\d{2}\/\d{2})/;
+    // Captura o valor financeiro no final da linha (ex: 123,45)
     const regexValor = /(-?\s*[\d\.]+\,\d{2}\s*-?)$/;
 
     let dentroDoExtrato = false;
@@ -40,53 +40,43 @@ export async function POST(request: Request) {
       const line = lines[i];
       const lineUpper = line.toUpperCase();
 
-      // 1. ANCORA DE INICIO: So comeca a ler quando entra na secao de extrato/lancamentos
+      // 1. ANCORA DE INICIO: Entra no extrato no cabecalho de compras
       if (
-        lineUpper.includes('LANÇAMENTO') ||
-        lineUpper.includes('LANCAMENTO') ||
-        lineUpper.includes('DETALHAMENTO') ||
-        lineUpper.includes('TRANSAÇÃO') ||
-        lineUpper.includes('TRANSACOES') ||
-        lineUpper.includes('COMPRAS DO PERÍODO')
+        lineUpper.includes('LANÇAMENTOS: COMPRAS E SAQUES') ||
+        lineUpper.includes('LANCAMENTOS: COMPRAS E SAQUES') ||
+        lineUpper.includes('LANÇAMENTOS: PRODUTOS E SERVIÇOS')
       ) {
         dentroDoExtrato = true;
         continue;
       }
 
-      // 2. ANCORA DE FIM: Interrompe a leitura assim que sai dos lancamentos
+      // 2. ANCORA DE FIM: Interrompe assim que chega nas compras futuras, boletos ou limites
       if (
-        dentroDoExtrato &&
-        (lineUpper.includes('RESUMO DA FATURA') ||
-          lineUpper.includes('OPERAÇÕES DE CRÉDITO') ||
-          lineUpper.includes('INFORMAÇÕES ADICIONAIS') ||
-          lineUpper.includes('AUTENTICAÇÃO MECÂNICA') ||
-          lineUpper.includes('PARCELAMENTO DE FATURA') ||
-          lineUpper.includes('CÓDIGO DE BARRAS') ||
-          lineUpper.includes('CAMPANHA') ||
-          lineUpper.includes('MENSAGEM PARA VOCÊ'))
+        lineUpper.includes('COMPRAS PARCELADAS - PRÓXIMAS FATURAS') ||
+        lineUpper.includes('COMPRAS PARCELADAS - PROXIMAS FATURAS') ||
+        lineUpper.includes('LIMITES DE CRÉDITO') ||
+        lineUpper.includes('ENCARGOS COBRADOS NESTA FATURA') ||
+        lineUpper.includes('AUTENTICAÇÃO MECÂNICA') ||
+        lineUpper.includes('FICHA DE COMPENSAÇÃO')
       ) {
         dentroDoExtrato = false;
-        break;
       }
 
-      // Se nao estiver dentro do bloco de extrato, ignora a linha
       if (!dentroDoExtrato) {
         continue;
       }
 
-      // Filtros de seguranca adicionais para ignorar cabecalhos internos de tabelas
+      // Filtros estritos para pular pagamentos, taxas, totais e textos institucionais
       if (
         lineUpper.includes('PAGAMENTO VIA CONTA') ||
         lineUpper.includes('TOTAL DOS PAGAMENTOS') ||
-        lineUpper.includes('PAGAMENTO EFETUADO') ||
-        lineUpper.includes('SALDO ANTERIOR') ||
+        lineUpper.includes('LANÇAMENTOS NO CARTÃO') ||
+        lineUpper.includes('LANÇAMENTOS PRODUTOS E SERVIÇOS') ||
+        lineUpper.includes('TOTAL DOS LANÇAMENTOS ATUAIS') ||
         lineUpper.includes('ESTABELECIMENTO') ||
-        lineUpper.includes('SUBTOTAL') ||
-        lineUpper.includes('ENCARGOS') ||
-        lineUpper.includes('LIMITE') ||
-        lineUpper.includes('CREDITO') ||
-        lineUpper.includes('TITULAR') ||
-        lineUpper.includes('CARTÃO')
+        lineUpper.includes('PRODUTOS/SERVIÇOS') ||
+        lineUpper.includes('VALOR EM R$') ||
+        lineUpper.includes('DATA')
       ) {
         continue;
       }
@@ -98,7 +88,7 @@ export async function POST(request: Request) {
         const data = matchData[1];
         const valorStr = matchValor[1];
 
-        // Limpeza rigorosa do nome do estabelecimento
+        // Limpeza da descricao
         let desc = line
           .replace(data, '')
           .replace(valorStr, '')
@@ -107,12 +97,12 @@ export async function POST(request: Request) {
           .replace(/R\$/g, '')
           .trim();
 
-        // Ignora titulos, termos de resumo e descricoes invalidas
+        // Elimina descricoes muito curtas, longas ou que contenham palavras de boleto/CPF
         if (
-          desc.toUpperCase().includes('VALOR') ||
-          desc.toUpperCase().includes('TOTAL') ||
           desc.length < 2 ||
-          desc.length > 45
+          desc.length > 50 ||
+          desc.toUpperCase().includes('VALOR') ||
+          desc.toUpperCase().includes('TOTAL')
         ) {
           continue;
         }
@@ -121,7 +111,8 @@ export async function POST(request: Request) {
         let cleanVal = valorStr.replace('-', '').replace(/\./g, '').replace(',', '.').trim();
         let valor = parseFloat(cleanVal);
 
-        if (!isNaN(valor) && valor > 0) {
+        // Somente aceita compras normais (abaixo de R$ 5.000,00 cada)
+        if (!isNaN(valor) && valor > 0 && valor < 5000) {
           if (isNegative) {
             valor = -Math.abs(valor);
           }
