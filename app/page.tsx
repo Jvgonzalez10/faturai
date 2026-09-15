@@ -74,142 +74,155 @@ export default function Home() {
   const maiorGasto = transacaoLista.length > 0 ? Math.max(...transacaoLista.map((t) => t.valor)) : 0;
 
   return (
-    <div className="max-w-6xl mx-auto px-4 py-8 md:py-12">
-      <header className="flex flex-col md:flex-row justify-between items-start md:items-center mb-10 pb-6 border-b border-slate-800 gap-4">
-        <div>
-          <div className="flex items-center gap-2">
-            <div className="h-8 w-8 rounded-lg bg-blue-600 flex items-center justify-center font-bold text-white shadow-lg shadow-blue-500/30">
-              F
-            </div>
-            <h1 className="text-2xl font-bold tracking-tight text-white">FaturAi</h1>
-          </div>
-          <p className="text-slate-400 text-sm mt-1">
-            Gestao visual e inteligencia de fatura de cartao
-          </p>
-        </div>
-
-        {transacaoLista.length > 0 && (
-          <button
-            onClick={() => {
-              setTransacaoLista([]);
-              setFileName(null);
-            }}
-            className="text-xs bg-slate-800 hover:bg-slate-700 text-slate-300 font-medium px-4 py-2 rounded-lg border border-slate-700 transition"
-          >
-            Limpar Dado
-          </button>
-        )}
-      </header>
-
-      <div
-        onDragEnter={handleDrag}
-        onDragOver={handleDrag}
-        onDragLeave={handleDrag}
-        onDrop={handleDrop}
-        className={`relative border-2 border-dashed rounded-2xl p-8 text-center transition-all duration-200 mb-10 ${
-          dragActive
-            ? 'border-blue-500 bg-blue-500/10 scale-[1.01]'
-            : 'border-slate-700 hover:border-slate-500 bg-slate-800/40'
-        }`}
-      >
-        <input
-          type="file"
-          accept="application/pdf"
-          onChange={handleFileChange}
-          disabled={loading}
-          className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
-        />
-
-        <div className="flex flex-col items-center justify-center space-y-3">
-          <div className="p-3 bg-slate-800 rounded-full border border-slate-700">
-            <svg
-              className="w-6 h-6 text-blue-400"
-              fill="none"
-              stroke="currentColor"
-              viewBox="0 0 24 24"
-            >
-              <path
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                strokeWidth="2"
-                d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"
-              />
-            </svg>
-          </div>
-
+    <div className="min-h-screen bg-slate-950 text-slate-100 bg-[radial-gradient(ellipse_80%_80%_at_50%_-20%,rgba(120,119,198,0.15),rgba(255,255,255,0))]">
+      <div className="max-w-5xl mx-auto px-6 py-10 md:py-16">
+        
+        {/* Topbar / Header */}
+        <header className="flex flex-col md:flex-row justify-between items-start md:items-center mb-12 pb-6 border-b border-slate-800/80 gap-4">
           <div>
-            <p className="text-sm font-medium text-slate-200">
-              {fileName ? (
-                <span className="text-blue-400 font-semibold">{fileName}</span>
-              ) : (
-                'Arraste a fatura em PDF aqui ou clique para selecionar'
-              )}
+            <div className="flex items-center gap-3">
+              <div className="h-10 w-10 rounded-xl bg-gradient-to-tr from-indigo-500 to-blue-500 flex items-center justify-center font-bold text-white shadow-lg shadow-indigo-500/20 ring-1 ring-white/20">
+                F
+              </div>
+              <h1 className="text-3xl font-extrabold tracking-tight bg-clip-text text-transparent bg-gradient-to-r from-white via-slate-200 to-slate-400">
+                FaturAi
+              </h1>
+            </div>
+            <p className="text-slate-400 text-sm mt-1.5 font-normal">
+              Gestao visual e inteligencia de fatura de cartao
             </p>
-            <p className="text-xs text-slate-500 mt-1">Suporta arquivo PDF de fatura de cartao de credito</p>
           </div>
 
-          {loading && (
-            <div className="flex items-center space-x-2 text-blue-400 font-medium text-xs pt-2">
-              <span className="animate-spin rounded-full h-4 w-4 border-2 border-blue-400 border-t-transparent"></span>
-              <span>Processando e extraindo lancamento...</span>
-            </div>
+          {transacaoLista.length > 0 && (
+            <button
+              onClick={() => {
+                setTransacaoLista([]);
+                setFileName(null);
+              }}
+              className="text-xs bg-slate-900/80 hover:bg-slate-800 text-slate-300 font-medium px-4 py-2.5 rounded-xl border border-slate-800 shadow-sm transition-all duration-200 active:scale-95"
+            >
+              Limpar Dado
+            </button>
           )}
-        </div>
-      </div>
+        </header>
 
-      {transacaoLista.length > 0 && (
-        <div className="space-y-8 animate-fade-in">
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            <div className="bg-slate-800/60 border border-slate-700/60 p-5 rounded-xl">
-              <p className="text-xs font-medium text-slate-400">Total da Fatura</p>
-              <p className="text-2xl font-bold text-red-400 mt-1">
-                R$ {totalGasto.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-              </p>
+        {/* Area de Dropzone */}
+        <div
+          onDragEnter={handleDrag}
+          onDragOver={handleDrag}
+          onDragLeave={handleDrag}
+          onDrop={handleDrop}
+          className={`relative border border-dashed rounded-3xl p-10 text-center transition-all duration-300 mb-10 backdrop-blur-xl ${
+            dragActive
+              ? 'border-indigo-500 bg-indigo-500/10 scale-[1.01] shadow-2xl shadow-indigo-500/10'
+              : 'border-slate-800 hover:border-slate-700 bg-slate-900/40 hover:bg-slate-900/60 shadow-xl'
+          }`}
+        >
+          <input
+            type="file"
+            accept="application/pdf"
+            onChange={handleFileChange}
+            disabled={loading}
+            className="absolute inset-0 w-full h-full opacity-0 cursor-pointer z-10"
+          />
+
+          <div className="flex flex-col items-center justify-center space-y-4">
+            <div className="p-4 bg-slate-800/50 rounded-2xl border border-slate-700/50 shadow-inner">
+              <svg
+                className="w-7 h-7 text-indigo-400"
+                fill="none"
+                stroke="currentColor"
+                viewBox="0 0 24 24"
+              >
+                <path
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  strokeWidth="1.75"
+                  d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12"
+                />
+              </svg>
             </div>
 
-            <div className="bg-slate-800/60 border border-slate-700/60 p-5 rounded-xl">
-              <p className="text-xs font-medium text-slate-400">Maior Lancamento</p>
-              <p className="text-2xl font-bold text-amber-400 mt-1">
-                R$ {maiorGasto.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+            <div>
+              <p className="text-base font-semibold text-slate-200">
+                {fileName ? (
+                  <span className="text-indigo-400 font-bold">{fileName}</span>
+                ) : (
+                  'Arraste a fatura em PDF aqui ou clique para selecionar'
+                )}
               </p>
+              <p className="text-xs text-slate-400 mt-1">Suporta arquivo PDF de fatura de cartao de credito</p>
             </div>
+
+            {loading && (
+              <div className="flex items-center space-x-3 text-indigo-400 font-medium text-xs pt-3">
+                <span className="animate-spin rounded-full h-4 w-4 border-2 border-indigo-400 border-t-transparent"></span>
+                <span>Processando e extraindo lancamento...</span>
+              </div>
+            )}
           </div>
+        </div>
 
-          <div className="bg-slate-800/40 border border-slate-800 rounded-xl overflow-hidden backdrop-blur-sm">
-            <div className="px-6 py-4 border-b border-slate-800 flex justify-between items-center">
-              <h2 className="font-semibold text-slate-200">Lancamento Encontrado</h2>
-              <span className="text-xs bg-slate-800 text-slate-400 px-2.5 py-1 rounded-full border border-slate-700">
-                {transacaoLista.length} item
-              </span>
+        {/* Dashboard de Resultados */}
+        {transacaoLista.length > 0 && (
+          <div className="space-y-8 animate-fade-in">
+            {/* Cards Indicadores */}
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-5">
+              <div className="bg-gradient-to-b from-slate-900/80 to-slate-900/40 border border-slate-800/80 p-6 rounded-2xl backdrop-blur-xl relative overflow-hidden group">
+                <div className="absolute top-0 left-0 w-1 h-full bg-rose-500"></div>
+                <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">Total da Fatura</p>
+                <p className="text-3xl font-extrabold text-white mt-2 tracking-tight">
+                  R$ {totalGasto.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                </p>
+              </div>
+
+              <div className="bg-gradient-to-b from-slate-900/80 to-slate-900/40 border border-slate-800/80 p-6 rounded-2xl backdrop-blur-xl relative overflow-hidden group">
+                <div className="absolute top-0 left-0 w-1 h-full bg-amber-500"></div>
+                <p className="text-xs font-semibold uppercase tracking-wider text-slate-400">Maior Lancamento</p>
+                <p className="text-3xl font-extrabold text-white mt-2 tracking-tight">
+                  R$ {maiorGasto.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                </p>
+              </div>
             </div>
 
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-sm text-slate-300">
-                <thead className="bg-slate-800/80 text-xs uppercase text-slate-400 border-b border-slate-800">
-                  <tr>
-                    <th className="px-6 py-3">Data</th>
-                    <th className="px-6 py-3">Estabelecimento</th>
-                    <th className="px-6 py-3 text-right">Valor</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-800/60">
-                  {transacaoLista.map((item, index) => (
-                    <tr key={index} className="hover:bg-slate-800/30 transition">
-                      <td className="px-6 py-3.5 whitespace-nowrap text-slate-400 font-mono text-xs">
-                        {item.data}
-                      </td>
-                      <td className="px-6 py-3.5 font-medium text-slate-200">{item.descricao}</td>
-                      <td className="px-6 py-3.5 text-right font-semibold text-slate-100">
-                        R$ {item.valor.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
-                      </td>
+            {/* Tabela de Lancamentos */}
+            <div className="bg-slate-900/50 border border-slate-800/80 rounded-2xl overflow-hidden backdrop-blur-xl shadow-2xl">
+              <div className="px-6 py-5 border-b border-slate-800/80 flex justify-between items-center bg-slate-900/30">
+                <h2 className="font-bold text-slate-100 text-base">Lancamento Encontrado</h2>
+                <span className="text-xs bg-indigo-500/10 text-indigo-400 font-semibold px-3 py-1 rounded-full border border-indigo-500/20">
+                  {transacaoLista.length} item
+                </span>
+              </div>
+
+              <div className="overflow-x-auto">
+                <table className="w-full text-left text-sm text-slate-300">
+                  <thead className="bg-slate-950/60 text-[11px] font-bold uppercase tracking-wider text-slate-400 border-b border-slate-800/80">
+                    <tr>
+                      <th className="px-6 py-4">Data</th>
+                      <th className="px-6 py-4">Estabelecimento</th>
+                      <th className="px-6 py-4 text-right">Valor</th>
                     </tr>
-                  ))}
-                </tbody>
-              </table>
+                  </thead>
+                  <tbody className="divide-y divide-slate-800/40">
+                    {transacaoLista.map((item, index) => (
+                      <tr key={index} className="hover:bg-slate-800/30 transition-colors">
+                        <td className="px-6 py-4 whitespace-nowrap text-slate-400 font-mono text-xs">
+                          {item.data}
+                        </td>
+                        <td className="px-6 py-4 font-medium text-slate-200">{item.descricao}</td>
+                        <td className="px-6 py-4 text-right font-bold text-slate-100">
+                          R$ {item.valor.toLocaleString('pt-BR', { minimumFractionDigits: 2 })}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
             </div>
           </div>
-        </div>
-      )}
+        )}
+
+      </div>
     </div>
   );
 }
