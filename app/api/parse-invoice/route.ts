@@ -29,10 +29,8 @@ export async function POST(request: Request) {
 
     const transacaoLista: Array<{ data: string; descricao: string; valor: number }> = [];
 
-    // Captura apenas data DD/MM no inicio da linha
-    const regexData = /^(\d{2}\/\d{2})/;
-    // Captura o valor financeiro no final da linha (ex: 123,45)
-    const regexValor = /(-?\s*[\d\.]+\,\d{2}\s*-?)$/;
+    // Exige estritamente: Data no inicio (DD/MM), Texto do estabelecimento no meio e Valor no fim
+    const regexLinhaTransacao = /^(\d{2}\/\d{2})\s+(.+?)\s+(-?\s*[\d\.]+\,\d{2}\s*-?)$/;
 
     let dentroDoExtrato = false;
 
@@ -40,7 +38,7 @@ export async function POST(request: Request) {
       const line = lines[i];
       const lineUpper = line.toUpperCase();
 
-      // 1. ANCORA DE INICIO: Entra no extrato no cabecalho de compras
+      // 1. ANCORA DE INICIO: Entra no extrato no cabecalho
       if (
         lineUpper.includes('LANÇAMENTOS: COMPRAS E SAQUES') ||
         lineUpper.includes('LANCAMENTOS: COMPRAS E SAQUES') ||
@@ -50,14 +48,14 @@ export async function POST(request: Request) {
         continue;
       }
 
-      // 2. ANCORA DE FIM: Interrompe assim que chega nas compras futuras, boletos ou limites
+      // 2. ANCORA DE FIM: Corta a leitura antes das tabelas auxiliares
       if (
-        lineUpper.includes('COMPRAS PARCELADAS - PRÓXIMAS FATURAS') ||
-        lineUpper.includes('COMPRAS PARCELADAS - PROXIMAS FATURAS') ||
+        lineUpper.includes('COMPRAS PARCELADAS') ||
         lineUpper.includes('LIMITES DE CRÉDITO') ||
-        lineUpper.includes('ENCARGOS COBRADOS NESTA FATURA') ||
-        lineUpper.includes('AUTENTICAÇÃO MECÂNICA') ||
-        lineUpper.includes('FICHA DE COMPENSAÇÃO')
+        lineUpper.includes('ENCARGOS COBRADOS') ||
+        lineUpper.includes('OUTRA OPÇÃO DE PAGAMENTO') ||
+        lineUpper.includes('PARCELAS FIXAS') ||
+        lineUpper.includes('CASO VOCÊ PAGUE')
       ) {
         dentroDoExtrato = false;
       }
@@ -66,7 +64,7 @@ export async function POST(request: Request) {
         continue;
       }
 
-      // Filtros estritos para pular pagamentos, taxas, totais e textos institucionais
+      // 3. FILTROS DE CABEÇALHO E TOTALIZADORES
       if (
         lineUpper.includes('PAGAMENTO VIA CONTA') ||
         lineUpper.includes('TOTAL DOS PAGAMENTOS') ||
@@ -81,38 +79,39 @@ export async function POST(request: Request) {
         continue;
       }
 
-      const matchData = line.match(regexData);
-      const matchValor = line.match(regexValor);
+      // 4. VALIDACAO E EXTRAÇÃO ESTRITA
+      const match = line.match(regexLinhaTransacao);
 
-      if (matchData && matchValor) {
-        const data = matchData[1];
-        const valorStr = matchValor[1];
+      if (match) {
+        const data = match[1];
+        let desc = match[2].trim();
+        const valorStr = match[3];
 
-        // Limpeza da descricao
-        let desc = line
-          .replace(data, '')
-          .replace(valorStr, '')
+        // Filtro de palavras do sistema/explicativas do Itau
+        const descUpper = desc.toUpperCase();
+        if (
+          descUpper.includes('PRINCIPAL (') ||
+          descUpper.includes('JUROS (') ||
+          descUpper.includes('VALOR EM') ||
+          descUpper.includes('PREVISÃO') ||
+          descUpper.includes('SUBTOTAL') ||
+          desc.length < 2
+        ) {
+          continue;
+        }
+
+        // Limpeza do nome do estabelecimento
+        desc = desc
           .replace(/-topaz/gi, '')
           .replace(/topaz/gi, '')
           .replace(/R\$/g, '')
           .trim();
 
-        // Elimina descricoes muito curtas, longas ou que contenham palavras de boleto/CPF
-        if (
-          desc.length < 2 ||
-          desc.length > 50 ||
-          desc.toUpperCase().includes('VALOR') ||
-          desc.toUpperCase().includes('TOTAL')
-        ) {
-          continue;
-        }
-
         const isNegative = valorStr.includes('-');
         let cleanVal = valorStr.replace('-', '').replace(/\./g, '').replace(',', '.').trim();
         let valor = parseFloat(cleanVal);
 
-        // Somente aceita compras normais (abaixo de R$ 5.000,00 cada)
-        if (!isNaN(valor) && valor > 0 && valor < 5000) {
+        if (!isNaN(valor) && valor > 0) {
           if (isNegative) {
             valor = -Math.abs(valor);
           }
