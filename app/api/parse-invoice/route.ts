@@ -15,7 +15,6 @@ export async function POST(request: Request) {
     const arrayBuffer = await file.arrayBuffer();
     const buffer = Buffer.from(arrayBuffer);
 
-    // Renderiza o texto mantendo a estrutura nativa
     const pdfData = await pdfParse(buffer);
     const text = pdfData.text || '';
 
@@ -30,13 +29,13 @@ export async function POST(request: Request) {
 
     const transacoes: Array<{ data: string; descricao: string; valor: number }> = [];
 
-    // Regex flexível: Data DD/MM + Descrição + Valor (aceita sinal de - e sufixo de estorno)
-    const regexTransacao = /(\d{2}\/\d{2})\s+(.+?)\s+(-?\s*[\d\.]+\,\d{2}\s*-?)$/;
+    // Captura: [DD/MM] [Descricao] [Valor com ou sem sinal negativo]
+    const regexTransacao = /^(\d{2}\/\d{2})\s+(.+?)\s+(-?\s*[\d\.]+\,\d{2}\s*-?)$/;
 
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
 
-      // Ignora cabecalhos e linhas de saldo anterior / pagamentos efetuados
+      // Ignora resumos da fatura, limites, linhas de saldo e cabecalhos
       if (
         line.includes('Pagamento via conta') ||
         line.includes('Total dos pagamentos') ||
@@ -45,7 +44,10 @@ export async function POST(request: Request) {
         line.includes('Vencimento') ||
         line.includes('Total desta fatura') ||
         line.includes('SALDO ANTERIOR') ||
-        line.includes('ESTABELECIMENTO')
+        line.includes('ESTABELECIMENTO') ||
+        line.includes('Proxima fatura') ||
+        line.includes('Subtotal') ||
+        line.includes('Encargos')
       ) {
         continue;
       }
@@ -53,21 +55,31 @@ export async function POST(request: Request) {
       const match = line.match(regexTransacao);
 
       if (match) {
-        const [_, data, desc, valorStr] = match;
+        const [_, data, descBruta, valorStr] = match;
 
-        // Identifica estorno/crédito
+        // Limpa a palavra -topaz (e variacoes de caixa alta/baixa) e espacos extras
+        let desc = descBruta
+          .replace(/-topaz/gi, '')
+          .replace(/topaz/gi, '')
+          .trim();
+
+        // Ignora titulos remanescentes
+        if (desc.toUpperCase().includes('VALOR') || desc.length < 2) {
+          continue;
+        }
+
         const isNegative = valorStr.includes('-');
         let cleanVal = valorStr.replace('-', '').replace(/\./g, '').replace(',', '.').trim();
         let valor = parseFloat(cleanVal);
 
-        if (!isNaN(valor) && valor > 0 && desc.trim().length > 1) {
+        if (!isNaN(valor) && valor > 0) {
           if (isNegative) {
             valor = -Math.abs(valor);
           }
 
           transacoes.push({
             data,
-            descricao: desc.trim(),
+            descricao: desc,
             valor,
           });
         }
