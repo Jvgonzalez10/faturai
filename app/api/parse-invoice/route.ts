@@ -29,38 +29,47 @@ export async function POST(request: Request) {
 
     const transacoes: Array<{ data: string; descricao: string; valor: number }> = [];
 
-    // Captura a data exata no inicio da linha (formato DD/MM)
-    const regexLinhaComprada = /^(\d{2}\/\d{2})\s+(.+?)\s+([\d\.]+\,\d{2})$/;
+    // Regex para capturar data, descricao e valor (prevendo sinal negativo ou sufixo -/CR)
+    const regexLinha = /^(\d{2}\/\d{2})\s+(.+?)\s+(-?\s*[\d\.]+\,\d{2}\s*-?)$/;
 
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
 
-      // Ignora cabecalhos e resumos da fatura
+      // Ignora cabecalhos, resumos e pagamentos do mes anterior que nao entram nos lancamentos atuais
       if (
         line.includes('Pagamento via conta') ||
         line.includes('Total dos pagamentos') ||
         line.includes('PAGAMENTO EFETUADO') ||
         line.includes('RESUMO DA FATURA') ||
         line.includes('Vencimento') ||
-        line.includes('Total desta fatura')
+        line.includes('Total desta fatura') ||
+        line.includes('SALDO ANTERIOR')
       ) {
         continue;
       }
 
-      const match = line.match(regexLinhaComprada);
+      const match = line.match(regexLinha);
 
       if (match) {
         const [_, data, desc, valorStr] = match;
 
-        // Valida se nao e um titulo de cabecalho
+        // Ignora titulos de coluna da tabela
         if (desc.includes('ESTABELECIMENTO') || desc.includes('VALOR')) {
           continue;
         }
 
-        const valorClean = valorStr.replace(/\./g, '').replace(',', '.');
-        const valor = parseFloat(valorClean);
+        // Verifica se e um estorno/credito (possui o simbolo de menos)
+        const isNegative = valorStr.includes('-');
+        
+        let valorClean = valorStr.replace('-', '').replace(/\./g, '').replace(',', '.').trim();
+        let valor = parseFloat(valorClean);
 
-        if (!isNaN(valor) && valor > 0 && desc.length > 1) {
+        if (!isNaN(valor) && valor !== 0 && desc.length > 1) {
+          // Aplica o sinal negativo se for estorno
+          if (isNegative) {
+            valor = -Math.abs(valor);
+          }
+
           transacoes.push({
             data,
             descricao: desc.trim(),
