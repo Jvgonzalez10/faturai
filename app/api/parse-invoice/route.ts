@@ -29,22 +29,13 @@ export async function POST(request: Request) {
 
     const transacaoLista: Array<{ data: string; descricao: string; valor: number }> = [];
 
-    // Regex para data (DD/MM) e valor monetario no final da linha
     const regexData = /^(\d{2}\/\d{2})/;
     const regexValor = /(-?\s*[\d\.]+\,\d{2}\s*-?)$/;
-
-    let dentroDoExtrato = false;
 
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
       const lineUpper = line.toUpperCase();
 
-      // Ativa a captura apenas quando entra na secao de lancamento
-      if (lineUpper.includes('LANÇAMENTO') || lineUpper.includes('LANCAMENTO') || lineUpper.includes('DETALHAMENTO')) {
-        dentroDoExtrato = true;
-      }
-
-      // Trava de seguranca para ignorar resumos gerais e limites
       if (
         lineUpper.includes('PAGAMENTO VIA CONTA') ||
         lineUpper.includes('TOTAL DOS PAGAMENTOS') ||
@@ -70,7 +61,6 @@ export async function POST(request: Request) {
         const data = matchData[1];
         const valorStr = matchValor[1];
 
-        // Limpa a descricao removendo a data, o valor e o termo topaz
         let desc = line
           .replace(data, '')
           .replace(valorStr, '')
@@ -79,7 +69,6 @@ export async function POST(request: Request) {
           .replace(/R\$/g, '')
           .trim();
 
-        // Evita capturar linhas de resumo longas ou titulos
         if (desc.toUpperCase().includes('VALOR') || desc.length < 2 || desc.length > 50) {
           continue;
         }
@@ -88,7 +77,6 @@ export async function POST(request: Request) {
         let cleanVal = valorStr.replace('-', '').replace(/\./g, '').replace(',', '.').trim();
         let valor = parseFloat(cleanVal);
 
-        // Descarta valores zerados ou extremamente discrepantes isolados
         if (!isNaN(valor) && valor > 0 && valor < 30000) {
           if (isNegative) {
             valor = -Math.abs(valor);
