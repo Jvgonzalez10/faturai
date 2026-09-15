@@ -36,6 +36,7 @@ export async function POST(request: Request) {
       const line = lines[i];
       const lineUpper = line.toUpperCase();
 
+      // Filtro de linhas institucionais e resumos
       if (
         lineUpper.includes('PAGAMENTO VIA CONTA') ||
         lineUpper.includes('TOTAL DOS PAGAMENTOS') ||
@@ -61,6 +62,7 @@ export async function POST(request: Request) {
         const data = matchData[1];
         const valorStr = matchValor[1];
 
+        // Limpeza dos descritivos
         let desc = line
           .replace(data, '')
           .replace(valorStr, '')
