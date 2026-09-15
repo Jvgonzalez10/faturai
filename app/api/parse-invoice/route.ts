@@ -29,39 +29,64 @@ export async function POST(request: Request) {
 
     const transacaoLista: Array<{ data: string; descricao: string; valor: number }> = [];
 
-    // Captura data no formato DD/MM (inicio da linha)
-    const regexData = /^(\d{2}\/\d{2})/;
-    // Captura o valor financeiro no final da linha
+    // Formato de data comum em faturas: DD/MM ou DD/MM/AAAA
+    const regexData = /^(\d{2}\/\d{2}(?:\/\d{2,4})?)/;
+    // Captura apenas valores monetarios validos no final da linha (ex: 123,45 ou -123,45)
     const regexValor = /(-?\s*[\d\.]+\,\d{2}\s*-?)$/;
+
+    let dentroDoExtrato = false;
 
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
       const lineUpper = line.toUpperCase();
 
-      // Trava de seguranca para ignorar resumos gerais, limites, codigos de barra e pagamentos
+      // 1. ANCORA DE INICIO: So comeca a ler quando entra na secao de extrato/lancamentos
+      if (
+        lineUpper.includes('LANÇAMENTO') ||
+        lineUpper.includes('LANCAMENTO') ||
+        lineUpper.includes('DETALHAMENTO') ||
+        lineUpper.includes('TRANSAÇÃO') ||
+        lineUpper.includes('TRANSACOES') ||
+        lineUpper.includes('COMPRAS DO PERÍODO')
+      ) {
+        dentroDoExtrato = true;
+        continue;
+      }
+
+      // 2. ANCORA DE FIM: Interrompe a leitura assim que sai dos lancamentos
+      if (
+        dentroDoExtrato &&
+        (lineUpper.includes('RESUMO DA FATURA') ||
+          lineUpper.includes('OPERAÇÕES DE CRÉDITO') ||
+          lineUpper.includes('INFORMAÇÕES ADICIONAIS') ||
+          lineUpper.includes('AUTENTICAÇÃO MECÂNICA') ||
+          lineUpper.includes('PARCELAMENTO DE FATURA') ||
+          lineUpper.includes('CÓDIGO DE BARRAS') ||
+          lineUpper.includes('CAMPANHA') ||
+          lineUpper.includes('MENSAGEM PARA VOCÊ'))
+      ) {
+        dentroDoExtrato = false;
+        break;
+      }
+
+      // Se nao estiver dentro do bloco de extrato, ignora a linha
+      if (!dentroDoExtrato) {
+        continue;
+      }
+
+      // Filtros de seguranca adicionais para ignorar cabecalhos internos de tabelas
       if (
         lineUpper.includes('PAGAMENTO VIA CONTA') ||
         lineUpper.includes('TOTAL DOS PAGAMENTOS') ||
         lineUpper.includes('PAGAMENTO EFETUADO') ||
-        lineUpper.includes('RESUMO DA FATURA') ||
-        lineUpper.includes('VENCIMENTO') ||
-        lineUpper.includes('TOTAL DESTA FATURA') ||
         lineUpper.includes('SALDO ANTERIOR') ||
         lineUpper.includes('ESTABELECIMENTO') ||
-        lineUpper.includes('PROXIMA FATURA') ||
         lineUpper.includes('SUBTOTAL') ||
         lineUpper.includes('ENCARGOS') ||
         lineUpper.includes('LIMITE') ||
         lineUpper.includes('CREDITO') ||
-        lineUpper.includes('OPERAÇÕES DE CRÉDITO') ||
-        lineUpper.includes('AUTENTICAÇÃO') ||
-        lineUpper.includes('PARCELAMENTO') ||
-        lineUpper.includes('CET ANUAL') ||
-        lineUpper.includes('JUROS') ||
-        lineUpper.includes('IOF') ||
-        lineUpper.includes('FINANCIAMENTO') ||
-        lineUpper.includes('FATURA ANTERIOR') ||
-        lineUpper.includes('DEMONSTRATIVO')
+        lineUpper.includes('TITULAR') ||
+        lineUpper.includes('CARTÃO')
       ) {
         continue;
       }
@@ -73,7 +98,7 @@ export async function POST(request: Request) {
         const data = matchData[1];
         const valorStr = matchValor[1];
 
-        // Limpeza do texto da descricao
+        // Limpeza rigorosa do nome do estabelecimento
         let desc = line
           .replace(data, '')
           .replace(valorStr, '')
@@ -82,7 +107,7 @@ export async function POST(request: Request) {
           .replace(/R\$/g, '')
           .trim();
 
-        // Ignora titulos, termos de resumo e linhas com texto muito curto ou longo
+        // Ignora titulos, termos de resumo e descricoes invalidas
         if (
           desc.toUpperCase().includes('VALOR') ||
           desc.toUpperCase().includes('TOTAL') ||
@@ -96,8 +121,7 @@ export async function POST(request: Request) {
         let cleanVal = valorStr.replace('-', '').replace(/\./g, '').replace(',', '.').trim();
         let valor = parseFloat(cleanVal);
 
-        // Descarta valores invalidos ou absurdos (compras unitarias acima de 15 mil costumam ser erros de leitura de limite/boleto)
-        if (!isNaN(valor) && valor > 0 && valor < 15000) {
+        if (!isNaN(valor) && valor > 0) {
           if (isNegative) {
             valor = -Math.abs(valor);
           }
