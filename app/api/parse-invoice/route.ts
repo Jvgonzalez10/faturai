@@ -29,16 +29,33 @@ export async function POST(request: Request) {
 
     const transacaoLista: Array<{ data: string; descricao: string; valor: number }> = [];
 
+    let totalFaturaOficial = 0;
+    let totalEncargos = 0;
     let dentroDoExtrato = false;
 
-    // Captura separadamente: Data (DD/MM) + Descrição + Parcela opcional (DD/DD) + Valor final
+    // Regex para captura de lancamentos com parcelas isoladas
     const regexLinhaComParcela = /^(\d{2}\/\d{2})(.*?)(?:(\d{2}\/\d{2}))?\s*(-?\s*[\d\.]+\,\d{2})$/;
 
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
       const lineUpper = line.toUpperCase();
 
-      // 1. ATIVA LEITURA
+      // 1. CAPTURA DOS TOTALIZADORES DO CABEÇALHO DO ITAÚ
+      if (lineUpper.includes('TOTAL DESTA FATURA') || lineUpper.includes('O TOTAL DA SUA FATURA É:')) {
+        const matchVal = line.match(/([\d\.]+\,\d{2})/);
+        if (matchVal) {
+          totalFaturaOficial = parseFloat(matchVal[1].replace(/\./g, '').replace(',', '.'));
+        }
+      }
+
+      if (lineUpper.includes('ENCARGOS (FINANCIAMENTO + MORATÓRIO)')) {
+        const matchVal = line.match(/([\d\.]+\,\d{2})/);
+        if (matchVal) {
+          totalEncargos = parseFloat(matchVal[1].replace(/\./g, '').replace(',', '.'));
+        }
+      }
+
+      // 2. CONTROLE DE ENTRADA E SAÍDA DO EXTRATO
       if (
         lineUpper.includes('LANÇAMENTOS: COMPRAS E SAQUES') ||
         lineUpper.includes('LANCAMENTOS: COMPRAS E SAQUES') ||
@@ -48,7 +65,6 @@ export async function POST(request: Request) {
         continue;
       }
 
-      // 2. DESATIVA LEITURA (Ignora parcelamentos futuros, limites e resumos)
       if (
         lineUpper.includes('COMPRAS PARCELADAS') ||
         lineUpper.includes('LIMITES DE CRÉDITO') ||
@@ -59,7 +75,7 @@ export async function POST(request: Request) {
 
       if (!dentroDoExtrato) continue;
 
-      // 3. FILTRA CABEÇALHOS, CATEGORIAS E REFINANCIAMENTOS
+      // 3. FILTRA CABEÇALHOS E CATEGORIAS
       if (
         lineUpper.startsWith('TRANSPORTE') ||
         lineUpper.startsWith('RESTAURANTE') ||
@@ -76,26 +92,23 @@ export async function POST(request: Request) {
         lineUpper.startsWith('VESTUÁRIO') ||
         lineUpper.startsWith('VESTUARIO') ||
         lineUpper.startsWith('DATAESTABELECIMENTO') ||
-        lineUpper.includes('FINANCIAM') ||
-        lineUpper.includes('FINANCIAMENTO') ||
         lineUpper.includes('PAGAMENTO VIA CONTA') ||
         lineUpper.includes('TOTAL DOS PAGAMENTOS')
       ) {
         continue;
       }
 
-      // 4. EXTRAÇÃO PRECISA
+      // 4. EXTRAÇÃO DOS LANÇAMENTOS
       const match = line.match(regexLinhaComParcela);
 
       if (match) {
         const data = match[1];
         let desc = match[2].trim();
-        const parcela = match[3]; // Isola a parcela (ex: 05/06) sem misturar com o valor
+        const parcela = match[3];
         const valorStr = match[4];
 
         if (desc.length < 2) continue;
 
-        // Se houver indicador de parcela no nome, limpa
         if (parcela) {
           desc = `${desc} ${parcela}`.trim();
         }
@@ -116,8 +129,21 @@ export async function POST(request: Request) {
       }
     }
 
+    // Adiciona os encargos como um item financeiro caso existam
+    if (totalEncargos > 0) {
+      transacaoLista.push({
+        data: '03/09',
+        descricao: 'ENCARGOS (JUROS / MULTA / IOF)',
+        valor: totalEncargos,
+      });
+    }
+
+    const somaTotalCalculada = transacaoLista.reduce((acc, item) => acc + item.valor, 0);
+
     return NextResponse.json({
       success: true,
+      totalFatura: totalFaturaOficial || somaTotalCalculada,
+      totalEncargos,
       count: transacaoLista.length,
       dados: transacaoLista,
     });
