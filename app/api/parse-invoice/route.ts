@@ -30,113 +30,117 @@ export async function POST(request: Request) {
     const transacaoLista: Array<{ data: string; descricao: string; valor: number }> = [];
 
     let dentroDoExtrato = false;
-    let ultimaDataEncontrada = '';
+    let dataAtual = '';
+    let descBuffer: string[] = [];
 
-    const regexData = /(\d{2}\/\d{2})/;
-    const regexValor = /(-?\s*[\d\.]+\,\d{2}\s*-?)$/;
+    const regexData = /^(\d{2}\/\d{2})$/;
+    const regexValor = /^(-?\s*[\d\.]+\,\d{2}\s*-?)$/;
+
+    // Lista de categorias/termos do Itau para descartar na descricao
+    const ignorarCategorias = [
+      'TRANSPORTE', 'RESTAURANTE', 'SUPERMERCADO', 'SAÚDE', 'SAUDE',
+      'EDUCACAO', 'EDUCAÇÃO', 'OUTROS', 'LAZER', 'SERVIÇOS', 'SERVICOS',
+      'CASA', 'VESTUÁRIO', 'VESTUARIO', 'SUPERMARKET'
+    ];
 
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
       const lineUpper = line.toUpperCase();
 
-      // 1. ÁREA DE INTERESSE: Ativa ao ler os cabecalhos de compras do Itau
+      // 1. ANCORA DE INICIO: Ativa a leitura ao encontrar os blocos de lancamentos do Itau
       if (
         lineUpper.includes('LANÇAMENTOS: COMPRAS E SAQUES') ||
         lineUpper.includes('LANCAMENTOS: COMPRAS E SAQUES') ||
-        lineUpper.includes('LANÇAMENTOS: PRODUTOS E SERVIÇOS')
+        lineUpper.includes('LANÇAMENTOS: PRODUTOS E SERVIÇOS') ||
+        lineUpper.includes('LANÇAMENTOS PRODUTOS E SERVIÇOS') ||
+        lineUpper.includes('LANÇAMENTOS DO CARTÃO')
       ) {
         dentroDoExtrato = true;
         continue;
       }
 
-      // 2. CORTE ESTRITO: Interrompe a leitura ao chegar em secoes de resumos e parcelas futuras
+      // 2. ANCORA DE FIM: Interrompe assim que chega nas parcelas futuras, limites ou boletos
       if (
         lineUpper.includes('COMPRAS PARCELADAS - PRÓXIMAS FATURAS') ||
         lineUpper.includes('COMPRAS PARCELADAS - PROXIMAS FATURAS') ||
         lineUpper.includes('LIMITES DE CRÉDITO') ||
         lineUpper.includes('LIMITES DE CREDITO') ||
-        lineUpper.includes('ENCARGOS COBRADOS NESTA FATURA') ||
-        lineUpper.includes('NOVO TETO DE JUROS DO CARTÃO') ||
+        lineUpper.includes('NOVO TETO DE JUROS') ||
         lineUpper.includes('AUTENTICAÇÃO MECÂNICA') ||
         lineUpper.includes('FICHA DE COMPENSAÇÃO')
       ) {
         dentroDoExtrato = false;
       }
 
-      if (!dentroDoExtrato) {
-        continue;
-      }
+      if (!dentroDoExtrato) continue;
 
-      // 3. IGNORA PALAVRAS CHAVE INSTITUCIONAIS E TOTALIZADORES
+      // 3. IGNORA REPETIÇÕES E CABEÇALHOS
       if (
         lineUpper.includes('PAGAMENTO VIA CONTA') ||
         lineUpper.includes('TOTAL DOS PAGAMENTOS') ||
         lineUpper.includes('TOTAL DOS LANÇAMENTOS ATUAIS') ||
-        lineUpper.includes('LANÇAMENTOS NO CARTÃO') ||
-        lineUpper.includes('LANÇAMENTOS PRODUTOS E SERVIÇOS') ||
         lineUpper.includes('ESTABELECIMENTO') ||
         lineUpper.includes('PRODUTOS/SERVIÇOS') ||
         lineUpper.includes('VALOR EM R$') ||
-        lineUpper.includes('DATA')
+        lineUpper.includes('PRINCIPAL (') ||
+        lineUpper.includes('JUROS (')
       ) {
         continue;
       }
 
-      // Captura e memoriza a data (mesmo se estiver sozinha na linha)
-      const matchData = line.match(regexData);
-      if (matchData) {
-        ultimaDataEncontrada = matchData[1];
+      // CASO A: A linha é uma Data (DD/MM)
+      if (regexData.test(line)) {
+        dataAtual = line;
+        descBuffer = [];
+        continue;
       }
 
-      // Busca o valor no final da linha
-      const matchValor = line.match(regexValor);
-
-      if (matchValor && ultimaDataEncontrada) {
-        const valorStr = matchValor[1];
-
-        // Extrai e limpa a descricao do estabelecimento
-        let desc = line
-          .replace(regexData, '')
-          .replace(valorStr, '')
-          .replace(/-topaz/gi, '')
-          .replace(/topaz/gi, '')
-          .replace(/R\$/g, '')
-          .trim();
-
-        // Filtra linhas de categoria/subtextos da fatura
-        const descLower = desc.toLowerCase();
-        if (
-          descLower.startsWith('transporte') ||
-          descLower.startsWith('restaurante') ||
-          descLower.startsWith('supermercado') ||
-          descLower.startsWith('saúde') ||
-          descLower.startsWith('educacao') ||
-          descLower.startsWith('outros') ||
-          descLower.startsWith('lazer') ||
-          descLower.startsWith('serviços') ||
-          descLower.startsWith('casa') ||
-          descLower.startsWith('vestuário') ||
-          descUpper.includes('PRINCIPAL (') ||
-          descUpper.includes('JUROS (')
-        ) {
-          continue;
-        }
-
+      // CASO B: A linha é um Valor Financeiro (ex: 189,72 ou 4.451,25)
+      if (regexValor.test(line) && dataAtual) {
+        const valorStr = line;
         const isNegative = valorStr.includes('-');
         let cleanVal = valorStr.replace('-', '').replace(/\./g, '').replace(',', '.').trim();
         let valor = parseFloat(cleanVal);
 
-        // Somente adiciona compras validas
+        // Monta a descricao juntando o buffer acumulado
+        let desc = descBuffer.join(' ').trim();
+
+        // Filtra sujeiras de categoria
+        ignorarCategorias.forEach((cat) => {
+          const reg = new RegExp(`\\b${cat}\\b`, 'gi');
+          desc = desc.replace(reg, '');
+        });
+
+        desc = desc.replace(/R\$/g, '').trim();
+
         if (!isNaN(valor) && valor > 0 && valor < 5000) {
-          if (isNegative) {
-            valor = -Math.abs(valor);
-          }
+          if (isNegative) valor = -Math.abs(valor);
 
           transacaoLista.push({
-            data: ultimaDataEncontrada,
+            data: dataAtual,
             descricao: desc || 'Compra com cartão',
             valor,
           });
+        }
+
+        // Limpa o estado para a proxima transacao
+        descBuffer = [];
+        continue;
+      }
+
+      // CASO C: A linha é o nome do estabelecimento ou texto intermediario
+      if (dataAtual && !ignorarCategorias.includes(lineUpper)) {
+        // Se a linha for apenas uma categoria isolada (ex: "supermercado RIO DE JANEIR"), ignora
+        let ehCategoriaIsolada = false;
+        for (const cat of ignorarCategorias) {
+          if (lineUpper.startsWith(cat)) {
+            ehCategoriaIsolada = true;
+            break;
+          }
+        }
+
+        if (!ehCategoriaIsolada) {
+          descBuffer.push(line);
         }
       }
     }
