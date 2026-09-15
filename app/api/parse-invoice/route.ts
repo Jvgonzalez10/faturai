@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import PDFParser from 'pdf2json';
+import pdfParse from 'pdf-parse';
 
 export const runtime = 'nodejs';
 
@@ -13,80 +13,51 @@ export async function POST(request: Request) {
     }
 
     const buffer = Buffer.from(await file.arrayBuffer());
-
-    const parsedData = await new Promise<any>((resolve, reject) => {
-      const pdfParser = new (PDFParser as any)();
-      pdfParser.on('pdfParser_dataError', (errData: any) => reject(errData.parserError));
-      pdfParser.on('pdfParser_dataReady', (pdfData: any) => resolve(pdfData));
-      pdfParser.parseBuffer(buffer);
-    });
+    const data = await pdfParse(buffer);
+    const text = data.text;
 
     const transacoes: Array<{ data: string; descricao: string; valor: number }> = [];
 
-    // Processa pagina por pagina
-    for (const page of parsedData.Pages) {
-      // Objeto para agrupar textos pelo alinhamento vertical (Y)
-      const rows: { [key: number]: Array<{ x: number; text: string }> } = {};
+    // Quebra o texto por linhas e remove espacos vazios
+    const lines = text.split('\n').map((l) => l.trim()).filter(Boolean);
 
-      for (const t of page.Texts) {
-        // Tolerancia de alinhamento vertical (arredonda Y para agrupar itens da mesma linha)
-        const y = Math.round(t.y * 5) / 5;
-        
-        let textStr = '';
-        try {
-          textStr = decodeURIComponent(t.R[0].T).trim();
-        } catch {
-          textStr = t.R[0].T.trim();
-        }
+    // Expressao regular para capturar "DD/MM NOME DO ESTABELECIMENTO VALOR"
+    const regexTransacao = /^(\d{2}\/\d{2})\s+(.+?)\s+([\d\.,]+)$/;
 
-        if (!textStr) continue;
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
 
-        if (!rows[y]) {
-          rows[y] = [];
-        }
-        rows[y].push({ x: t.x, text: textStr });
+      // Ignora trechos de pagamentos de fatura anterior e totais
+      if (
+        line.includes('Pagamento via conta') ||
+        line.includes('Total dos pagamentos') ||
+        line.includes('ESTABELECIMENTO') ||
+        line.includes('Lançamentos')
+      ) {
+        continue;
       }
 
-      // Ordena cada linha da esquerda para a direita (coordenada X)
-      const sortedY = Object.keys(rows).map(Number).sort((a, b) => a - b);
+      const match = line.match(regexTransacao);
 
-      for (const y of sortedY) {
-        const rowItems = rows[y].sort((a, b) => a.x - b.x);
-        const lineText = rowItems.map((item) => item.text).join(' ');
+      if (match) {
+        const [_, dt, desc, valStr] = match;
 
-        // Ignora resumos, limites e pagamentos
-        if (
-          lineText.includes('Pagamento via conta') ||
-          lineText.includes('Total dos pagamentos') ||
-          lineText.includes('ESTABELECIMENTO') ||
-          lineText.includes('Lançamentos')
-        ) {
-          continue;
+        // Trata valores monetários no formato BR
+        let valClean = valStr;
+        if (valClean.includes(',') && valClean.includes('.')) {
+          valClean = valClean.replace(/\./g, '').replace(',', '.');
+        } else if (valClean.includes(',')) {
+          valClean = valClean.replace(',', '.');
         }
 
-        // Busca padroes do Itau: [Data DD/MM] [Estabelecimento] [Valor ex: 189,72]
-        const match = lineText.match(/^(\d{2}\/\d{2})\s+(.+?)\s+([\d\.,]+)$/);
+        const valor = parseFloat(valClean);
 
-        if (match) {
-          const [_, data, descricao, valorStr] = match;
-
-          // Limpa formatação monetária brasileira
-          let cleanVal = valorStr;
-          if (cleanVal.includes(',') && cleanVal.includes('.')) {
-            cleanVal = cleanVal.replace(/\./g, '').replace(',', '.');
-          } else if (cleanVal.includes(',')) {
-            cleanVal = cleanVal.replace(',', '.');
-          }
-
-          const valor = parseFloat(cleanVal);
-
-          if (!isNaN(valor) && valor > 0 && descricao.length > 2) {
-            transacoes.push({
-              data,
-              descricao: descricao.trim(),
-              valor,
-            });
-          }
+        if (!isNaN(valor) && valor > 0 && desc.length > 2) {
+          transacoes.push({
+            data: dt,
+            descricao: desc.trim(),
+            valor,
+          });
         }
       }
     }
