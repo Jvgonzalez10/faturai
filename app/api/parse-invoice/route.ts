@@ -29,32 +29,33 @@ export async function POST(request: Request) {
 
     const transacaoLista: Array<{ data: string; descricao: string; valor: number }> = [];
 
-    // Captura data no inicio (DD/MM), estabelecimento no meio e valor no fim
-    const regexLancamento = /^(\d{2}\/\d{2})\s+(.+?)\s+(-?\s*[\d\.]+\,\d{2}\s*-?)$/;
-
     let dentroDoExtrato = false;
+    let ultimaDataEncontrada = '';
+
+    const regexData = /(\d{2}\/\d{2})/;
+    const regexValor = /(-?\s*[\d\.]+\,\d{2}\s*-?)$/;
 
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
       const lineUpper = line.toUpperCase();
 
-      // 1. REATIVADOR DE LEITURA: Reativa sempre que encontra novo bloco de lancamentos
+      // 1. ÁREA DE INTERESSE: Ativa ao ler os cabecalhos de compras do Itau
       if (
         lineUpper.includes('LANÇAMENTOS: COMPRAS E SAQUES') ||
         lineUpper.includes('LANCAMENTOS: COMPRAS E SAQUES') ||
-        lineUpper.includes('LANÇAMENTOS: PRODUTOS E SERVIÇOS') ||
-        lineUpper.includes('LANÇAMENTOS DO CARTÃO') ||
-        lineUpper.includes('LANÇAMENTOS PRODUTOS E SERVIÇOS')
+        lineUpper.includes('LANÇAMENTOS: PRODUTOS E SERVIÇOS')
       ) {
         dentroDoExtrato = true;
         continue;
       }
 
-      // 2. CORTE DEFINITIVO: Desliga a leitura apenas quando atinge as tabelas de resumo e limites do final do PDF
+      // 2. CORTE ESTRITO: Interrompe a leitura ao chegar em secoes de resumos e parcelas futuras
       if (
         lineUpper.includes('COMPRAS PARCELADAS - PRÓXIMAS FATURAS') ||
         lineUpper.includes('COMPRAS PARCELADAS - PROXIMAS FATURAS') ||
         lineUpper.includes('LIMITES DE CRÉDITO') ||
+        lineUpper.includes('LIMITES DE CREDITO') ||
+        lineUpper.includes('ENCARGOS COBRADOS NESTA FATURA') ||
         lineUpper.includes('NOVO TETO DE JUROS DO CARTÃO') ||
         lineUpper.includes('AUTENTICAÇÃO MECÂNICA') ||
         lineUpper.includes('FICHA DE COMPENSAÇÃO')
@@ -66,11 +67,13 @@ export async function POST(request: Request) {
         continue;
       }
 
-      // 3. DESCARTE DE CABEÇALHOS E LINHAS INSTITUCIONAIS DA TABELA
+      // 3. IGNORA PALAVRAS CHAVE INSTITUCIONAIS E TOTALIZADORES
       if (
         lineUpper.includes('PAGAMENTO VIA CONTA') ||
         lineUpper.includes('TOTAL DOS PAGAMENTOS') ||
         lineUpper.includes('TOTAL DOS LANÇAMENTOS ATUAIS') ||
+        lineUpper.includes('LANÇAMENTOS NO CARTÃO') ||
+        lineUpper.includes('LANÇAMENTOS PRODUTOS E SERVIÇOS') ||
         lineUpper.includes('ESTABELECIMENTO') ||
         lineUpper.includes('PRODUTOS/SERVIÇOS') ||
         lineUpper.includes('VALOR EM R$') ||
@@ -79,61 +82,59 @@ export async function POST(request: Request) {
         continue;
       }
 
-      // 4. EXTRAÇÃO DA LINHA
-      const match = line.match(regexLancamento);
+      // Captura e memoriza a data (mesmo se estiver sozinha na linha)
+      const matchData = line.match(regexData);
+      if (matchData) {
+        ultimaDataEncontrada = matchData[1];
+      }
 
-      if (match) {
-        const data = match[1];
-        let desc = match[2].trim();
-        const valorStr = match[3];
+      // Busca o valor no final da linha
+      const matchValor = line.match(regexValor);
 
-        // Ignora sublinhas de categoria do Itaú (ex: "transporte Sao Paulo", "supermercado RIO DE JANEIR")
-        if (
-          desc.toLowerCase().startsWith('transporte') ||
-          desc.toLowerCase().startsWith('restaurante') ||
-          desc.toLowerCase().startsWith('supermercado') ||
-          desc.toLowerCase().startsWith('saúde') ||
-          desc.toLowerCase().startsWith('educacao') ||
-          desc.toLowerCase().startsWith('outros') ||
-          desc.toLowerCase().startsWith('lazer') ||
-          desc.toLowerCase().startsWith('serviços') ||
-          desc.toLowerCase().startsWith('casa') ||
-          desc.toLowerCase().startsWith('vestuário')
-        ) {
-          continue;
-        }
+      if (matchValor && ultimaDataEncontrada) {
+        const valorStr = matchValor[1];
 
-        // Descarta textos explicativos do parcelamento PIX e Financiamento
-        const descUpper = desc.toUpperCase();
-        if (
-          descUpper.includes('PRINCIPAL (') ||
-          descUpper.includes('JUROS (') ||
-          descUpper.includes('VALOR EM')
-        ) {
-          continue;
-        }
-
-        // Limpeza de marca
-        desc = desc
+        // Extrai e limpa a descricao do estabelecimento
+        let desc = line
+          .replace(regexData, '')
+          .replace(valorStr, '')
           .replace(/-topaz/gi, '')
           .replace(/topaz/gi, '')
           .replace(/R\$/g, '')
           .trim();
 
-        if (desc.length < 2) continue;
+        // Filtra linhas de categoria/subtextos da fatura
+        const descLower = desc.toLowerCase();
+        if (
+          descLower.startsWith('transporte') ||
+          descLower.startsWith('restaurante') ||
+          descLower.startsWith('supermercado') ||
+          descLower.startsWith('saúde') ||
+          descLower.startsWith('educacao') ||
+          descLower.startsWith('outros') ||
+          descLower.startsWith('lazer') ||
+          descLower.startsWith('serviços') ||
+          descLower.startsWith('casa') ||
+          descLower.startsWith('vestuário') ||
+          descUpper.includes('PRINCIPAL (') ||
+          descUpper.includes('JUROS (')
+        ) {
+          continue;
+        }
 
         const isNegative = valorStr.includes('-');
         let cleanVal = valorStr.replace('-', '').replace(/\./g, '').replace(',', '.').trim();
         let valor = parseFloat(cleanVal);
 
+        // Somente adiciona compras validas
         if (!isNaN(valor) && valor > 0 && valor < 5000) {
           if (isNegative) {
             valor = -Math.abs(valor);
           }
 
           transacaoLista.push({
-            data,
-            descricao: desc,
+            data: ultimaDataEncontrada,
+            descricao: desc || 'Compra com cartão',
             valor,
           });
         }
