@@ -31,18 +31,14 @@ export async function POST(request: Request) {
 
     let dentroDoExtrato = false;
 
-    // A MÁGICA ESTÁ AQUI: Regex que entende o texto "colado" gerado pelo pdf-parse
-    // Ex: "03/08BILLY THE GRILLRIO DE J12,00"
-    // 1. ^(\d{2}\/\d{2})   -> Pega os 5 primeiros caracteres (Data: 03/08)
-    // 2. (.*?)             -> Pega tudo que estiver no meio (Nome: BILLY THE GRILLRIO DE J)
-    // 3. (-?[\d\.]+\,\d{2})$ -> Pega o número no final da linha (Valor: 12,00)
-    const regexLinhaColada = /^(\d{2}\/\d{2})(.*?)(-?[\d\.]+\,\d{2})$/;
+    // Captura separadamente: Data (DD/MM) + Descrição + Parcela opcional (DD/DD) + Valor final
+    const regexLinhaComParcela = /^(\d{2}\/\d{2})(.*?)(?:(\d{2}\/\d{2}))?\s*(-?\s*[\d\.]+\,\d{2})$/;
 
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
       const lineUpper = line.toUpperCase();
 
-      // 1. ATIVA A LEITURA
+      // 1. ATIVA LEITURA
       if (
         lineUpper.includes('LANÇAMENTOS: COMPRAS E SAQUES') ||
         lineUpper.includes('LANCAMENTOS: COMPRAS E SAQUES') ||
@@ -52,7 +48,7 @@ export async function POST(request: Request) {
         continue;
       }
 
-      // 2. DESATIVA A LEITURA (Fim da seção de compras)
+      // 2. DESATIVA LEITURA (Ignora parcelamentos futuros, limites e resumos)
       if (
         lineUpper.includes('COMPRAS PARCELADAS') ||
         lineUpper.includes('LIMITES DE CRÉDITO') ||
@@ -63,7 +59,7 @@ export async function POST(request: Request) {
 
       if (!dentroDoExtrato) continue;
 
-      // 3. IGNORA CATEGORIAS E CABEÇALHOS (Limpeza de linhas inúteis)
+      // 3. FILTRA CABEÇALHOS, CATEGORIAS E REFINANCIAMENTOS
       if (
         lineUpper.startsWith('TRANSPORTE') ||
         lineUpper.startsWith('RESTAURANTE') ||
@@ -79,22 +75,30 @@ export async function POST(request: Request) {
         lineUpper.startsWith('CASA') ||
         lineUpper.startsWith('VESTUÁRIO') ||
         lineUpper.startsWith('VESTUARIO') ||
-        lineUpper.startsWith('DATAESTABELECIMENTO') || // O cabeçalho da tabela também vem colado!
+        lineUpper.startsWith('DATAESTABELECIMENTO') ||
+        lineUpper.includes('FINANCIAM') ||
+        lineUpper.includes('FINANCIAMENTO') ||
         lineUpper.includes('PAGAMENTO VIA CONTA') ||
         lineUpper.includes('TOTAL DOS PAGAMENTOS')
       ) {
         continue;
       }
 
-      // 4. EXTRAÇÃO DOS DADOS
-      const match = line.match(regexLinhaColada);
+      // 4. EXTRAÇÃO PRECISA
+      const match = line.match(regexLinhaComParcela);
 
       if (match) {
         const data = match[1];
         let desc = match[2].trim();
-        const valorStr = match[3];
+        const parcela = match[3]; // Isola a parcela (ex: 05/06) sem misturar com o valor
+        const valorStr = match[4];
 
         if (desc.length < 2) continue;
+
+        // Se houver indicador de parcela no nome, limpa
+        if (parcela) {
+          desc = `${desc} ${parcela}`.trim();
+        }
 
         const isNegative = valorStr.includes('-');
         let cleanVal = valorStr.replace('-', '').replace(/\./g, '').replace(',', '.').trim();
@@ -105,8 +109,8 @@ export async function POST(request: Request) {
 
           transacaoLista.push({
             data,
-            descricao: desc, // Ex: "SHOPEE *AMCasu 05/06"
-            valor,           // Ex: 62.77
+            descricao: desc,
+            valor,
           });
         }
       }
