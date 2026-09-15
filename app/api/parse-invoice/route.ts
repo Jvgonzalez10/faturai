@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import { extractText } from 'unpdf';
+import PDFParser from 'pdf2json';
 
 export const runtime = 'nodejs';
 
@@ -12,69 +12,80 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Nenhum arquivo enviado' }, { status: 400 });
     }
 
-    const arrayBuffer = await file.arrayBuffer();
-    const buffer = new Uint8Array(arrayBuffer);
+    const buffer = Buffer.from(await file.arrayBuffer());
 
-    const { text } = await extractText(buffer);
-    const fullText = Array.isArray(text) ? text.join('\n') : text;
-
-    if (!fullText || fullText.trim().length === 0) {
-      return NextResponse.json({ error: 'Nenhum texto foi encontrado no PDF.' }, { status: 400 });
-    }
-
-    const lines = fullText
-      .split(/\r?\n/)
-      .map((l) => l.trim())
-      .filter(Boolean);
+    const parsedData = await new Promise<any>((resolve, reject) => {
+      const pdfParser = new (PDFParser as any)();
+      pdfParser.on('pdfParser_dataError', (errData: any) => reject(errData.parserError));
+      pdfParser.parseBuffer(buffer);
+      pdfParser.on('pdfParser_dataReady', (pdfData: any) => resolve(pdfData));
+    });
 
     const transacoes: Array<{ data: string; descricao: string; valor: number }> = [];
 
-    // Regex para capturar data, descricao e valor (prevendo sinal negativo ou sufixo -/CR)
-    const regexLinha = /^(\d{2}\/\d{2})\s+(.+?)\s+(-?\s*[\d\.]+\,\d{2}\s*-?)$/;
+    // Mapeia todas as paginas do PDF
+    for (const page of parsedData.Pages) {
+      const rows: { [key: number]: Array<{ x: number; text: string }> } = {};
 
-    for (let i = 0; i < lines.length; i++) {
-      const line = lines[i];
+      // Agrupa blocos de texto por coordenada Y (mesma linha visual)
+      for (const t of page.Texts) {
+        const y = Math.round(t.y * 4) / 4; // Tolerancia de alinhamento
+        let textStr = '';
 
-      // Ignora cabecalhos, resumos e pagamentos do mes anterior que nao entram nos lancamentos atuais
-      if (
-        line.includes('Pagamento via conta') ||
-        line.includes('Total dos pagamentos') ||
-        line.includes('PAGAMENTO EFETUADO') ||
-        line.includes('RESUMO DA FATURA') ||
-        line.includes('Vencimento') ||
-        line.includes('Total desta fatura') ||
-        line.includes('SALDO ANTERIOR')
-      ) {
-        continue;
+        try {
+          textStr = decodeURIComponent(t.R[0].T).trim();
+        } catch {
+          textStr = t.R[0].T.trim();
+        }
+
+        if (!textStr) continue;
+
+        if (!rows[y]) {
+          rows[y] = [];
+        }
+        rows[y].push({ x: t.x, text: textStr });
       }
 
-      const match = line.match(regexLinha);
+      // Processa linha por linha da esquerda para a direita
+      const sortedY = Object.keys(rows).map(Number).sort((a, b) => a - b);
 
-      if (match) {
-        const [_, data, desc, valorStr] = match;
+      for (const y of sortedY) {
+        const rowItems = rows[y].sort((a, b) => a.x - b.x);
+        const lineText = rowItems.map((item) => item.text).join(' ');
 
-        // Ignora titulos de coluna da tabela
-        if (desc.includes('ESTABELECIMENTO') || desc.includes('VALOR')) {
+        // Ignora pagamentos de fatura anterior e cabecalhos do Itau
+        if (
+          lineText.includes('Pagamento via conta') ||
+          lineText.includes('Total dos pagamentos') ||
+          lineText.includes('PAGAMENTO EFETUADO') ||
+          lineText.includes('RESUMO DA FATURA') ||
+          lineText.includes('ESTABELECIMENTO') ||
+          lineText.includes('SALDO ANTERIOR')
+        ) {
           continue;
         }
 
-        // Verifica se e um estorno/credito (possui o simbolo de menos)
-        const isNegative = valorStr.includes('-');
-        
-        let valorClean = valorStr.replace('-', '').replace(/\./g, '').replace(',', '.').trim();
-        let valor = parseFloat(valorClean);
+        // Procura: [DD/MM] [NOME LOJA] [VALOR (ex: 120,50 ou -120,50)]
+        const match = lineText.match(/^(\d{2}\/\d{2})\s+(.+?)\s+(-?\s*[\d\.]+\,\d{2}\s*-?)$/);
 
-        if (!isNaN(valor) && valor !== 0 && desc.length > 1) {
-          // Aplica o sinal negativo se for estorno
-          if (isNegative) {
-            valor = -Math.abs(valor);
+        if (match) {
+          const [_, data, desc, valorStr] = match;
+
+          const isNegative = valorStr.includes('-');
+          let cleanVal = valorStr.replace('-', '').replace(/\./g, '').replace(',', '.').trim();
+          let valor = parseFloat(cleanVal);
+
+          if (!isNaN(valor) && valor > 0 && desc.length > 1) {
+            if (isNegative) {
+              valor = -Math.abs(valor);
+            }
+
+            transacoes.push({
+              data,
+              descricao: desc.trim(),
+              valor,
+            });
           }
-
-          transacoes.push({
-            data,
-            descricao: desc.trim(),
-            valor,
-          });
         }
       }
     }
