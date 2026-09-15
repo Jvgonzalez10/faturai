@@ -29,14 +29,16 @@ export async function POST(request: Request) {
 
     const transacaoLista: Array<{ data: string; descricao: string; valor: number }> = [];
 
+    // Captura data no formato DD/MM (inicio da linha)
     const regexData = /^(\d{2}\/\d{2})/;
+    // Captura o valor financeiro no final da linha
     const regexValor = /(-?\s*[\d\.]+\,\d{2}\s*-?)$/;
 
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
       const lineUpper = line.toUpperCase();
 
-      // Filtro de linhas institucionais e resumos
+      // Trava de seguranca para ignorar resumos gerais, limites, codigos de barra e pagamentos
       if (
         lineUpper.includes('PAGAMENTO VIA CONTA') ||
         lineUpper.includes('TOTAL DOS PAGAMENTOS') ||
@@ -49,8 +51,17 @@ export async function POST(request: Request) {
         lineUpper.includes('PROXIMA FATURA') ||
         lineUpper.includes('SUBTOTAL') ||
         lineUpper.includes('ENCARGOS') ||
-        lineUpper.includes('LIMITE DE CREDITO') ||
-        lineUpper.includes('OPERAÇÕES DE CRÉDITO')
+        lineUpper.includes('LIMITE') ||
+        lineUpper.includes('CREDITO') ||
+        lineUpper.includes('OPERAÇÕES DE CRÉDITO') ||
+        lineUpper.includes('AUTENTICAÇÃO') ||
+        lineUpper.includes('PARCELAMENTO') ||
+        lineUpper.includes('CET ANUAL') ||
+        lineUpper.includes('JUROS') ||
+        lineUpper.includes('IOF') ||
+        lineUpper.includes('FINANCIAMENTO') ||
+        lineUpper.includes('FATURA ANTERIOR') ||
+        lineUpper.includes('DEMONSTRATIVO')
       ) {
         continue;
       }
@@ -62,7 +73,7 @@ export async function POST(request: Request) {
         const data = matchData[1];
         const valorStr = matchValor[1];
 
-        // Limpeza dos descritivos
+        // Limpeza do texto da descricao
         let desc = line
           .replace(data, '')
           .replace(valorStr, '')
@@ -71,7 +82,13 @@ export async function POST(request: Request) {
           .replace(/R\$/g, '')
           .trim();
 
-        if (desc.toUpperCase().includes('VALOR') || desc.length < 2 || desc.length > 50) {
+        // Ignora titulos, termos de resumo e linhas com texto muito curto ou longo
+        if (
+          desc.toUpperCase().includes('VALOR') ||
+          desc.toUpperCase().includes('TOTAL') ||
+          desc.length < 2 ||
+          desc.length > 45
+        ) {
           continue;
         }
 
@@ -79,7 +96,8 @@ export async function POST(request: Request) {
         let cleanVal = valorStr.replace('-', '').replace(/\./g, '').replace(',', '.').trim();
         let valor = parseFloat(cleanVal);
 
-        if (!isNaN(valor) && valor > 0 && valor < 30000) {
+        // Descarta valores invalidos ou absurdos (compras unitarias acima de 15 mil costumam ser erros de leitura de limite/boleto)
+        if (!isNaN(valor) && valor > 0 && valor < 15000) {
           if (isNegative) {
             valor = -Math.abs(valor);
           }
