@@ -31,10 +31,9 @@ export async function POST(request: Request) {
 
     let dentroDoExtrato = false;
 
-    // Captura estritamente: Data (DD/MM) + Descrição + Valor no final da mesma linha
-    const regexLinhaItau = /^(\d{2}\/\d{2})\s+(.+?)\s+(-?\s*[\d\.]+\,\d{2}\s*-?)$/;
+    // Captura flexivel: Data (DD/MM) + Descrição (com espacos variados) + Valor no final
+    const regexLinhaItau = /^(\d{2}\/\d{2})\s+([\s\S]+?)\s+(-?\s*[\d\.]+\,\d{2}\s*-?)$/;
 
-    // Categorias do Itaú a remover da descrição
     const ignorarCategorias = [
       'TRANSPORTE', 'RESTAURANTE', 'SUPERMERCADO', 'SAÚDE', 'SAUDE',
       'EDUCACAO', 'EDUCAÇÃO', 'OUTROS', 'LAZER', 'SERVIÇOS', 'SERVICOS',
@@ -45,7 +44,7 @@ export async function POST(request: Request) {
       const line = lines[i];
       const lineUpper = line.toUpperCase();
 
-      // 1. ÁREA DE INTERESSE: Liga a leitura ao encontrar os blocos de lançamentos
+      // 1. ÁREA DE INTERESSE: Ativa a leitura no extrato do Itau
       if (
         lineUpper.includes('LANÇAMENTOS: COMPRAS E SAQUES') ||
         lineUpper.includes('LANCAMENTOS: COMPRAS E SAQUES') ||
@@ -57,7 +56,7 @@ export async function POST(request: Request) {
         continue;
       }
 
-      // 2. CORTE DE SEGURANÇA: Desliga antes de ler parcelas futuras, limites e boletos
+      // 2. CORTE DE SEGURANÇA: Para antes das secoes de parcelas futuras e limites
       if (
         lineUpper.includes('COMPRAS PARCELADAS - PRÓXIMAS FATURAS') ||
         lineUpper.includes('COMPRAS PARCELADAS - PROXIMAS FATURAS') ||
@@ -87,7 +86,7 @@ export async function POST(request: Request) {
         continue;
       }
 
-      // 4. EXTRAÇÃO DO LANÇAMENTO
+      // 4. EXTRAÇÃO DA TRANSAÇÃO
       const match = line.match(regexLinhaItau);
 
       if (match) {
@@ -95,7 +94,7 @@ export async function POST(request: Request) {
         let desc = match[2].trim();
         const valorStr = match[3];
 
-        // Limpa sublinhas de categorias/cidades coladas
+        // Remove nomes de categorias colados na descricao
         ignorarCategorias.forEach((cat) => {
           const reg = new RegExp(`\\b${cat}\\b`, 'gi');
           desc = desc.replace(reg, '');
