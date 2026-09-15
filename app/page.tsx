@@ -37,7 +37,7 @@ export default function Home() {
   return (
     <main style={{ padding: '2rem', fontFamily: 'sans-serif', maxWidth: '800px', margin: '0 auto' }}>
       <header style={{ marginBottom: '2rem', textAlign: 'center' }}>
-        <h1 style={{ color: '#2563eb', fontSize: '2.5rem', marginBottom: '0.5rem' }}>FaturAí</h1>
+        <h1 style={{ color: '#2563eb', fontSize: '2.5rem', marginBottom: '0.5rem' }}>FaturAi</h1>
         <p style={{ color: '#4b5563' }}>Contabilizador de faturas e cartões de crédito em nuvem.</p>
       </header>
 
@@ -68,8 +68,9 @@ export default function Home() {
                 style={{
                   padding: '1rem',
                   marginBottom: '0.5rem',
-                  backgroundColor: '#f9fafb',
+                  backgroundColor: '#ffffff',
                   borderRadius: '8px',
+                  border: '1px solid #e5e7eb',
                   display: 'flex',
                   justifyContent: 'space-between',
                   alignItems: 'center',
