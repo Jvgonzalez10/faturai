@@ -27,15 +27,17 @@ export async function POST(request: Request) {
       .map((l) => l.trim())
       .filter(Boolean);
 
-    const transacoes: Array<{ data: string; descricao: string; valor: number }> = [];
+    const transacaoLista: Array<{ data: string; descricao: string; valor: number }> = [];
 
-    // Captura: [DD/MM] [Descricao] [Valor com ou sem sinal negativo]
-    const regexTransacao = /^(\d{2}\/\d{2})\s+(.+?)\s+(-?\s*[\d\.]+\,\d{2}\s*-?)$/;
+    // Captura data no inicio ou meio
+    const regexData = /(\d{2}\/\d{2})/;
+    // Captura valor no final da linha (com suporte a sinal negativo de estorno)
+    const regexValor = /(-?\s*[\d\.]+\,\d{2}\s*-?)$/;
 
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
 
-      // Ignora resumos da fatura, limites, linhas de saldo e cabecalhos
+      // Ignora resumos, limites e pagamentos
       if (
         line.includes('Pagamento via conta') ||
         line.includes('Total dos pagamentos') ||
@@ -52,18 +54,22 @@ export async function POST(request: Request) {
         continue;
       }
 
-      const match = line.match(regexTransacao);
+      const matchData = line.match(regexData);
+      const matchValor = line.match(regexValor);
 
-      if (match) {
-        const [_, data, descBruta, valorStr] = match;
+      if (matchData && matchValor) {
+        const data = matchData[1];
+        const valorStr = matchValor[1];
 
-        // Limpa a palavra -topaz (e variacoes de caixa alta/baixa) e espacos extras
-        let desc = descBruta
+        // Isola a descricao limpando a data, o valor e o termo topaz
+        let desc = line
+          .replace(data, '')
+          .replace(valorStr, '')
           .replace(/-topaz/gi, '')
           .replace(/topaz/gi, '')
+          .replace(/R\$/g, '')
           .trim();
 
-        // Ignora titulos remanescentes
         if (desc.toUpperCase().includes('VALOR') || desc.length < 2) {
           continue;
         }
@@ -77,7 +83,7 @@ export async function POST(request: Request) {
             valor = -Math.abs(valor);
           }
 
-          transacoes.push({
+          transacaoLista.push({
             data,
             descricao: desc,
             valor,
@@ -88,8 +94,8 @@ export async function POST(request: Request) {
 
     return NextResponse.json({
       success: true,
-      count: transacoes.length,
-      dados: transacoes,
+      count: transacaoLista.length,
+      dados: transacaoLista,
     });
   } catch (error) {
     console.error('Erro no processamento do PDF:', error);
