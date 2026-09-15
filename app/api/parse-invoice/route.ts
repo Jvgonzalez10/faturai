@@ -29,27 +29,36 @@ export async function POST(request: Request) {
 
     const transacaoLista: Array<{ data: string; descricao: string; valor: number }> = [];
 
-    // Captura data no inicio ou meio
-    const regexData = /(\d{2}\/\d{2})/;
-    // Captura valor no final da linha (com suporte a sinal negativo de estorno)
+    // Regex para data (DD/MM) e valor monetario no final da linha
+    const regexData = /^(\d{2}\/\d{2})/;
     const regexValor = /(-?\s*[\d\.]+\,\d{2}\s*-?)$/;
+
+    let dentroDoExtrato = false;
 
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
+      const lineUpper = line.toUpperCase();
 
-      // Ignora resumos, limites e pagamentos
+      // Ativa a captura apenas quando entra na secao de lancamento
+      if (lineUpper.includes('LANÇAMENTO') || lineUpper.includes('LANCAMENTO') || lineUpper.includes('DETALHAMENTO')) {
+        dentroDoExtrato = true;
+      }
+
+      // Trava de seguranca para ignorar resumos gerais e limites
       if (
-        line.includes('Pagamento via conta') ||
-        line.includes('Total dos pagamentos') ||
-        line.includes('PAGAMENTO EFETUADO') ||
-        line.includes('RESUMO DA FATURA') ||
-        line.includes('Vencimento') ||
-        line.includes('Total desta fatura') ||
-        line.includes('SALDO ANTERIOR') ||
-        line.includes('ESTABELECIMENTO') ||
-        line.includes('Proxima fatura') ||
-        line.includes('Subtotal') ||
-        line.includes('Encargos')
+        lineUpper.includes('PAGAMENTO VIA CONTA') ||
+        lineUpper.includes('TOTAL DOS PAGAMENTOS') ||
+        lineUpper.includes('PAGAMENTO EFETUADO') ||
+        lineUpper.includes('RESUMO DA FATURA') ||
+        lineUpper.includes('VENCIMENTO') ||
+        lineUpper.includes('TOTAL DESTA FATURA') ||
+        lineUpper.includes('SALDO ANTERIOR') ||
+        lineUpper.includes('ESTABELECIMENTO') ||
+        lineUpper.includes('PROXIMA FATURA') ||
+        lineUpper.includes('SUBTOTAL') ||
+        lineUpper.includes('ENCARGOS') ||
+        lineUpper.includes('LIMITE DE CREDITO') ||
+        lineUpper.includes('OPERAÇÕES DE CRÉDITO')
       ) {
         continue;
       }
@@ -61,7 +70,7 @@ export async function POST(request: Request) {
         const data = matchData[1];
         const valorStr = matchValor[1];
 
-        // Isola a descricao limpando a data, o valor e o termo topaz
+        // Limpa a descricao removendo a data, o valor e o termo topaz
         let desc = line
           .replace(data, '')
           .replace(valorStr, '')
@@ -70,7 +79,8 @@ export async function POST(request: Request) {
           .replace(/R\$/g, '')
           .trim();
 
-        if (desc.toUpperCase().includes('VALOR') || desc.length < 2) {
+        // Evita capturar linhas de resumo longas ou titulos
+        if (desc.toUpperCase().includes('VALOR') || desc.length < 2 || desc.length > 50) {
           continue;
         }
 
@@ -78,7 +88,8 @@ export async function POST(request: Request) {
         let cleanVal = valorStr.replace('-', '').replace(/\./g, '').replace(',', '.').trim();
         let valor = parseFloat(cleanVal);
 
-        if (!isNaN(valor) && valor > 0) {
+        // Descarta valores zerados ou extremamente discrepantes isolados
+        if (!isNaN(valor) && valor > 0 && valor < 30000) {
           if (isNegative) {
             valor = -Math.abs(valor);
           }
