@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import pdfParse from 'pdf-parse';
+import { extractText } from 'unpdf';
 
 export const runtime = 'nodejs';
 
@@ -12,50 +12,72 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Nenhum arquivo enviado' }, { status: 400 });
     }
 
-    const buffer = Buffer.from(await file.arrayBuffer());
-    const data = await pdfParse(buffer);
-    const text = data.text;
+    const arrayBuffer = await file.arrayBuffer();
+    const buffer = new Uint8Array(arrayBuffer);
+
+    // Extracao de texto compativel com o ambiente Serverless da Vercel
+    const { text } = await extractText(buffer);
+    const fullText = Array.isArray(text) ? text.join('\n') : text;
+
+    if (!fullText || fullText.trim().length === 0) {
+      return NextResponse.json({
+        error: 'Nenhum texto foi encontrado no PDF. Verifique se o arquivo nao e uma imagem digitalizada.',
+      }, { status: 400 });
+    }
+
+    const lines = fullText
+      .split(/\r?\n/)
+      .map((l) => l.trim())
+      .filter(Boolean);
 
     const transacoes: Array<{ data: string; descricao: string; valor: number }> = [];
 
-    // Quebra o texto por linhas e remove espacos vazios
-    const lines = text.split('\n').map((l) => l.trim()).filter(Boolean);
-
-    // Expressao regular para capturar "DD/MM NOME DO ESTABELECIMENTO VALOR"
-    const regexTransacao = /^(\d{2}\/\d{2})\s+(.+?)\s+([\d\.,]+)$/;
+    // Regex para datas (DD/MM ou DD/MM/AAAA)
+    const regexData = /(\d{2}\/\d{2}(?:\/\d{2,4})?)/;
+    
+    // Regex para valores financeiros brasileiros (ex: 15,90 ou 1.250,00)
+    const regexValor = /([\d\.]+\,\d{2})/;
 
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
 
-      // Ignora trechos de pagamentos de fatura anterior e totais
+      // Ignora cabecalhos e totais de pagamentos de faturas anteriores
       if (
         line.includes('Pagamento via conta') ||
         line.includes('Total dos pagamentos') ||
-        line.includes('ESTABELECIMENTO') ||
-        line.includes('Lançamentos')
+        line.includes('PAGAMENTO EFETUADO') ||
+        line.includes('RESUMO DA FATURA')
       ) {
         continue;
       }
 
-      const match = line.match(regexTransacao);
+      // 1. Tenta encontrar Data, Descricao e Valor na mesma linha
+      const matchData = line.match(regexData);
+      const matchValor = line.match(regexValor);
 
-      if (match) {
-        const [_, dt, desc, valStr] = match;
+      if (matchData && matchValor) {
+        const data = matchData[1];
+        const valorStr = matchValor[1];
 
-        // Trata valores monetários no formato BR
-        let valClean = valStr;
-        if (valClean.includes(',') && valClean.includes('.')) {
-          valClean = valClean.replace(/\./g, '').replace(',', '.');
-        } else if (valClean.includes(',')) {
-          valClean = valClean.replace(',', '.');
+        // Extrai o que sobrou da linha como descricao
+        let descricao = line
+          .replace(data, '')
+          .replace(valorStr, '')
+          .replace(/R\$/g, '')
+          .trim();
+
+        // Se a descricao ficou vazia na mesma linha, busca na linha seguinte
+        if (!descricao && lines[i + 1]) {
+          descricao = lines[i + 1].trim();
         }
 
-        const valor = parseFloat(valClean);
+        const valorClean = valorStr.replace(/\./g, '').replace(',', '.');
+        const valor = parseFloat(valorClean);
 
-        if (!isNaN(valor) && valor > 0 && desc.length > 2) {
+        if (!isNaN(valor) && valor > 0 && descricao.length > 1) {
           transacoes.push({
-            data: dt,
-            descricao: desc.trim(),
+            data,
+            descricao,
             valor,
           });
         }
@@ -68,7 +90,10 @@ export async function POST(request: Request) {
       dados: transacoes,
     });
   } catch (error) {
-    console.error('Erro ao processar PDF:', error);
-    return NextResponse.json({ error: 'Erro ao processar o arquivo da fatura' }, { status: 500 });
+    console.error('Erro no processamento do PDF:', error);
+    return NextResponse.json(
+      { error: 'Erro interno ao processar a fatura.' },
+      { status: 500 }
+    );
   }
 }
