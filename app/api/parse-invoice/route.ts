@@ -3,22 +3,25 @@ import pdfParse from 'pdf-parse';
 
 export const runtime = 'nodejs';
 
-// Função auxiliar para converter qualquer formato numérico do PDF
-function parseValue(valStr: string): number {
-  let clean = valStr.trim();
+// Converte valores monetários do PDF para float
+function parseBrazilianCurrency(str: string): number {
+  if (!str) return 0;
+  let clean = str.replace(/R\$/gi, '').replace(/\s+/g, '').trim();
   const isNegative = clean.includes('-');
-  clean = clean.replace('-', '').replace(/R\$/g, '').trim();
+  clean = clean.replace('-', '');
 
-  if (clean.includes(',')) {
+  // Trata '4.955,25' -> '4955.25'
+  if (/^\d{1,3}(\.\d{3})*,\d{2}$/.test(clean)) {
     clean = clean.replace(/\./g, '').replace(',', '.');
-  } else if (clean.includes('.')) {
+  } 
+  // Trata '4.451.25' (ponto no lugar de vírgula)
+  else if (/^\d{1,3}\.\d{3}\.\d{2}$/.test(clean)) {
     const parts = clean.split('.');
-    if (parts.length > 2) {
-      const dec = parts.pop();
-      clean = parts.join('') + '.' + dec;
-    } else if (parts.length === 2 && parts[1].length === 2) {
-      clean = parts[0] + '.' + parts[1];
-    }
+    clean = parts[0] + parts[1] + '.' + parts[2];
+  }
+  // Trata '4955,25'
+  else if (/^\d+,\d{2}$/.test(clean)) {
+    clean = clean.replace(',', '.');
   }
 
   const val = parseFloat(clean);
@@ -26,20 +29,38 @@ function parseValue(valStr: string): number {
   return isNegative ? -Math.abs(val) : val;
 }
 
-// Extrai o valor do total oficial do cabeçalho do documento
-function extractTotalAmount(fullText: string): number {
-  const match1 = fullText.match(/Total\s+desta\s+fatura[\s\S]{1,60}?([\d\.\,]{4,15})/i);
+// Captura o total oficial diretamente das seções de cabeçalho do Itaú
+function extractOfficialTotal(text: string): number {
+  // Padrão 1: "O total da sua fatura é: ... R$ 4.955,25" ou "R$ 4.451,25"
+  const match1 = text.match(/O\s+total\s+da\s+sua\s+fatura[\s\S]{1,120}?R\$\s*([\d\.\,]{4,15})/i);
   if (match1) {
-    const val = parseValue(match1[1]);
+    const val = parseBrazilianCurrency(match1[1]);
     if (val > 10) return val;
   }
 
-  const match2 = fullText.match(/O\s+total\s+da\s+sua\s+fatura[\s\S]{1,120}?R\$\s*([\d\.\,]{4,15})/i);
+  // Padrão 2: "Total desta fatura | 4.955,25" / "4.451.25"
+  const match2 = text.match(/Total\s+desta\s+fatura[\s\S]{1,60}?([\d\.\,]{4,15})/i);
   if (match2) {
-    const val = parseValue(match2[1]);
+    const val = parseBrazilianCurrency(match2[1]);
     if (val > 10) return val;
   }
 
+  // Padrão 3: "Valor do Documento | R$ 4.955,25"
+  const match3 = text.match(/Valor\s+do\s+Documento[\s\S]{1,40}?R\$\s*([\d\.\,]{4,15})/i);
+  if (match3) {
+    const val = parseBrazilianCurrency(match3[1]);
+    if (val > 10) return val;
+  }
+
+  return 0;
+}
+
+// Extrai encargos da fatura (juros/multa/IOF) se existirem
+function extractEncargos(text: string): number {
+  const match = text.match(/Total\s+de\s+encargos\s+em\s+R\$[\s\S]{1,40}?([\d\.\,]{3,10})/i);
+  if (match) {
+    return parseBrazilianCurrency(match[1]);
+  }
   return 0;
 }
 
@@ -61,7 +82,8 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Nenhum texto foi encontrado no PDF.' }, { status: 400 });
     }
 
-    const totalFaturaOficial = extractTotalAmount(text);
+    const totalFaturaOficial = extractOfficialTotal(text);
+    const totalEncargos = extractEncargos(text);
 
     const lines = text
       .split(/\r?\n/)
@@ -73,46 +95,65 @@ export async function POST(request: Request) {
     let dentroPagamentos = false;
     let dentroProximasFaturas = false;
 
-    // Regex para linhas de transação: Data (DD/MM) + Descrição + Parcela Opcional + Valor
-    const regexTransacao = /^(\d{2}\/\d{2})\s*(.*?)(?:(\d{2}\/\d{2}))?\s*(-?\s*[\d\.\,]+)$/;
+    // Regex de transações: Data (DD/MM) + Estabelecimento + Valor
+    const regexTransacao = /^(\d{2}\/\d{2})\s+(.*?)\s+(-?\s*R\$\s*-?\s*[\d\.\,]+)$/;
 
     for (let i = 0; i < lines.length; i++) {
-      // Remove barras "|" e múltiplos espaços para padronizar o texto da linha
       const lineClean = lines[i].replace(/\|/g, ' ').replace(/\s+/g, ' ').trim();
-      const lineNorm = lineClean.replace(/\s+/g, '').toUpperCase();
+      const lineCompacta = lineClean.replace(/\s+/g, '').toUpperCase();
       const lineUpper = lineClean.toUpperCase();
 
-      // 1. ISOLA SEÇÃO DE PAGAMENTOS ANTERIORES
-      if (lineNorm.includes('PAGAMENTOSEFETUADOS') || lineNorm.includes('PAGAMENTOS')) {
+      // Ignora a seção "Pagamentos Efetuados" (quitação da fatura anterior)
+      if (
+        lineCompacta.includes('PAGAMEN') || 
+        lineCompacta.includes('PAGAMENTOSEFETUADOS') ||
+        lineUpper.includes('PAGAMENTOS EFETUADOS')
+      ) {
         dentroPagamentos = true;
       }
-      if (lineNorm.includes('TOTALDOSPAGAMENTOS') || lineNorm.includes('LANÇAMENTOS:')) {
+
+      if (
+        lineCompacta.includes('TOTALDOSPAGAMENTOS') || 
+        lineCompacta.includes('LANÇAMENTOS:') || 
+        lineCompacta.includes('LANCAMENTOS:') ||
+        lineUpper.startsWith('LANÇAMENTOS')
+      ) {
         dentroPagamentos = false;
       }
+
       if (dentroPagamentos) continue;
 
-      // 2. ISOLA PRÓXIMAS FATURAS / LIMITES
+      // Ignora parcelas de faturas futuras e bloco de limites
       if (
-        lineNorm.includes('PRÓXIMASFATURAS') ||
-        lineNorm.includes('PROXIMASFATURAS') ||
-        lineNorm.includes('LIMITESDECRÉDITO') ||
-        lineNorm.includes('ENCARGOSCOBRADOS')
+        lineCompacta.includes('PRÓXIMASFATURAS') ||
+        lineCompacta.includes('PROXIMASFATURAS') ||
+        lineCompacta.includes('COMPRASPARCELADAS') ||
+        lineCompacta.includes('LIMITESDECRÉDITO') ||
+        lineCompacta.includes('ENCARGOSCOBRADOS')
       ) {
         dentroProximasFaturas = true;
       }
-      if (lineNorm.includes('LANÇAMENTOS:') || lineNorm.includes('LANCAMENTOS:')) {
+
+      if (
+        lineCompacta.includes('LANÇAMENTOS:') || 
+        lineCompacta.includes('LANCAMENTOS:')
+      ) {
         dentroProximasFaturas = false;
       }
+
       if (dentroProximasFaturas) continue;
 
-      // 3. DESCONSIDERA CABEÇALHOS E PAGAMENTOS DA CONTA
+      // Filtra termos de cabeçalho e pagamentos
       if (
         lineUpper.includes('PAGAMENTO VIA CONTA') ||
         lineUpper.includes('TOTAL DOS PAGAMENTOS') ||
         lineUpper.includes('LANÇAMENTOS NO CARTÃO') ||
         lineUpper.includes('TOTAL DOS LANÇAMENTOS') ||
+        lineUpper.includes('SUBTOTAL') ||
         lineUpper.startsWith('ESTABELECIMENTO') ||
-        lineUpper.startsWith('PRODUTOS/SERVIÇOS')
+        lineUpper.startsWith('PRODUTOS/SERVIÇOS') ||
+        lineUpper.startsWith('PAGAMENTO') ||
+        lineUpper.startsWith('DATA')
       ) {
         continue;
       }
@@ -122,27 +163,22 @@ export async function POST(request: Request) {
       if (match) {
         const data = match[1];
         let desc = match[2].trim();
-        const parcela = match[3];
-        const valorStr = match[4];
+        const valorStr = match[3];
 
         const descUpper = desc.toUpperCase();
 
-        // Ignora linhas que sejam puramente pagamento da fatura anterior
         if (
           descUpper === 'PAGAMENTO' ||
           descUpper.startsWith('PAGAMENTO VIA') ||
-          descUpper.startsWith('PAGAMENTO EFETUADO')
+          descUpper.startsWith('PAGAMENTO EFETUADO') ||
+          descUpper.includes('TOTAL DOS PAGAMENTOS')
         ) {
           continue;
         }
 
         if (desc.length < 2) continue;
 
-        if (parcela) {
-          desc = `${desc} ${parcela}`.trim();
-        }
-
-        const valor = parseValue(valorStr);
+        const valor = parseBrazilianCurrency(valorStr);
 
         if (valor !== 0 && Math.abs(valor) < 50000) {
           transacaoLista.push({
@@ -154,28 +190,17 @@ export async function POST(request: Request) {
       }
     }
 
-    // 4. RECONCILIAÇÃO FINANCEIRA AUTOMÁTICA
-    const somaCalculada = transacaoLista.reduce((acc, item) => acc + item.valor, 0);
-
-    if (totalFaturaOficial > 0) {
-      const diferenca = Math.round((totalFaturaOficial - somaCalculada) * 100) / 100;
-
-      if (diferenca > 0.01) {
-        transacaoLista.push({
-          data: '--',
-          descricao: 'ENCARGOS / JUROS DA FATURA',
-          valor: diferenca,
-        });
-      } else if (diferenca < -0.01) {
-        transacaoLista.push({
-          data: '--',
-          descricao: 'CRÉDITO / SALDO DE FATURA ANTERIOR',
-          valor: diferenca,
-        });
-      }
+    // Se houver encargos do rotativo informados no PDF (ex: R$ 130,19 na fatura 1), inclui como item real
+    if (totalEncargos > 0) {
+      transacaoLista.push({
+        data: '03/09',
+        descricao: 'ENCARGOS DA FATURA (JUROS / MULTA / IOF)',
+        valor: totalEncargos,
+      });
     }
 
-    const totalFinal = totalFaturaOficial > 0 ? totalFaturaOficial : somaCalculada;
+    const somaCalculada = transacaoLista.reduce((acc, item) => acc + item.valor, 0);
+    const totalFinal = totalFaturaOficial > 0 ? totalFaturaOficial : Math.round(somaCalculada * 100) / 100;
 
     return NextResponse.json({
       success: true,
