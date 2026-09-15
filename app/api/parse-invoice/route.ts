@@ -22,48 +22,62 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Nenhum texto foi encontrado no PDF.' }, { status: 400 });
     }
 
+    // 1. EXTRAÇÃO MULTILINHA DO TOTAL DA FATURA (Captura R$ 4.451,25 / 4.451.25)
+    let totalFaturaOficial = 0;
+    const matchTotal =
+      text.match(/Total\s+desta\s+fatura[\s\S]{1,50}?([\d\.]+[,\.]\d{2})/i) ||
+      text.match(/O\s+total\s+da\s+sua\s+fatura[\s\S]{1,100}?R\$\s*([\d\.]+[,\.]\d{2})/i);
+
+    if (matchTotal) {
+      let rawVal = matchTotal[1];
+      if (rawVal.includes(',')) {
+        rawVal = rawVal.replace(/\./g, '').replace(',', '.');
+      } else {
+        const parts = rawVal.split('.');
+        if (parts.length > 2) {
+          const dec = parts.pop();
+          rawVal = parts.join('') + '.' + dec;
+        }
+      }
+      const parsed = parseFloat(rawVal);
+      if (!isNaN(parsed) && parsed > 0) {
+        totalFaturaOficial = parsed;
+      }
+    }
+
     const lines = text
       .split(/\r?\n/)
       .map((l) => l.trim())
       .filter(Boolean);
 
     const transacaoLista: Array<{ data: string; descricao: string; valor: number }> = [];
-    let totalFaturaOficial = 0;
+
+    let dentroSecaoPagamentos = false;
     let dentroProximasFaturas = false;
 
-    // 1. CAPTURA DO TOTAL OFICIAL DA FATURA
-    for (const line of lines) {
-      const lineNorm = line.replace(/\s+/g, ' ').toUpperCase();
-      if (lineNorm.includes('TOTAL DESTA FATURA') || lineNorm.includes('O TOTAL DA SUA FATURA')) {
-        const matchVal = line.match(/([\d\.]+[,\.]\d{2})/);
-        if (matchVal) {
-          let rawVal = matchVal[1];
-          if (rawVal.includes(',')) {
-            rawVal = rawVal.replace(/\./g, '').replace(',', '.');
-          } else {
-            const parts = rawVal.split('.');
-            if (parts.length > 2) {
-              const dec = parts.pop();
-              rawVal = parts.join('') + '.' + dec;
-            }
-          }
-          const parsed = parseFloat(rawVal);
-          if (!isNaN(parsed) && parsed > 0) {
-            totalFaturaOficial = parsed;
-            break;
-          }
-        }
-      }
-    }
-
-    // 2. REGEX DE TRANSAÇÃO (Suporta valores positivos, negativos e parcelas)
     const regexTransacao = /^(\d{2}\/\d{2})\s*(.*?)(?:(\d{2}\/\d{2}))?\s*(-?\s*[\d\.]+[,\.]\d{2})$/;
 
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
       const lineNorm = line.replace(/\s+/g, '').toUpperCase();
+      const lineUpper = line.toUpperCase();
 
-      // Ignora a seção de "Próximas Faturas" para não duplicar parcelas futuras
+      // Ignora a seção de Pagamentos Efetuados (quitação da fatura anterior)
+      if (lineNorm.includes('PAGAMENTOSEFETUADOS') || lineNorm.includes('PA GA ME NT OS')) {
+        dentroSecaoPagamentos = true;
+      }
+
+      if (
+        lineNorm.includes('TOTALDOSPAGAMENTOS') ||
+        lineNorm.includes('LANÇAMENTOS:') ||
+        lineNorm.includes('LANCAMENTOS:')
+      ) {
+        dentroSecaoPagamentos = false;
+      }
+
+      if (dentroSecaoPagamentos) continue;
+
+      // Ignora parcelas de faturas futuras
       if (
         lineNorm.includes('PRÓXIMASFATURAS') ||
         lineNorm.includes('PROXIMASFATURAS') ||
@@ -73,26 +87,20 @@ export async function POST(request: Request) {
         dentroProximasFaturas = true;
       }
 
-      if (
-        lineNorm.includes('LANÇAMENTOS:') ||
-        lineNorm.includes('LANCAMENTOS:') ||
-        lineNorm.includes('LANÇAMENTOS')
-      ) {
+      if (lineNorm.includes('LANÇAMENTOS:') || lineNorm.includes('LANCAMENTOS:')) {
         dentroProximasFaturas = false;
       }
 
       if (dentroProximasFaturas) continue;
 
-      // Filtra pagamentos efetuados e subtotais
-      const lineUpper = line.toUpperCase();
+      // Filtra termos de pagamentos e subtotais das tabelas
       if (
         lineUpper.includes('PAGAMENTO VIA CONTA') ||
-        lineUpper.includes('PAGAMENTO -') ||
-        lineUpper.startsWith('PAGAMENTO') ||
         lineUpper.includes('TOTAL DOS PAGAMENTOS') ||
         lineUpper.includes('LANÇAMENTOS NO CARTÃO') ||
         lineUpper.includes('TOTAL DOS LANÇAMENTOS') ||
-        lineUpper.startsWith('ESTABELECIMENTO')
+        lineUpper.startsWith('ESTABELECIMENTO') ||
+        lineUpper.startsWith('PAGAMENTO')
       ) {
         continue;
       }
@@ -104,6 +112,17 @@ export async function POST(request: Request) {
         let desc = match[2].trim();
         const parcela = match[3];
         const valorStr = match[4];
+
+        const descUpper = desc.toUpperCase();
+
+        // Bloqueia pagamentos que tenham escapado das seções
+        if (
+          descUpper === 'PAGAMENTO' ||
+          descUpper.startsWith('PAGAMENTO VIA') ||
+          descUpper.includes('TOTAL DOS PAGAMENTOS')
+        ) {
+          continue;
+        }
 
         if (desc.length < 2) continue;
 
