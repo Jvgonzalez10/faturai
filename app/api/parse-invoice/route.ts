@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import PDFParser from 'pdf2json';
 
-export const runtime = 'nodejs'; // Força o ambiente Node.js na Vercel
+export const runtime = 'nodejs';
 
 export async function POST(request: Request) {
   try {
@@ -23,38 +23,57 @@ export async function POST(request: Request) {
       pdfParser.parseBuffer(buffer);
     });
 
-    const lines = pdfText.split(/\r?\n/);
+    const lines = pdfText.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
     const transacoes: Array<{ data: string; descricao: string; valor: number }> = [];
 
-    // Regex para pegar compras no formato "DD/MM ESTABELECIMENTO VALOR"
-    const regexTransacao = /(\d{2}\/\d{2})\s+([A-Za-z0-9\s\*\.\-\/]+?)\s+([\d\.,]+)$/;
+    // Regex para identificar datas (DD/MM) e valores no formato brasileiro (ex: 45,00 ou 1.250,50)
+    const regexData = /^(\d{2}\/\d{2})$/;
+    const regexValor = /^([\d\.,]+)$/;
 
-    for (const line of lines) {
-      const cleanLine = line.trim();
-      
-      // Ignora pagamentos de fatura anteriores
-      if (cleanLine.includes('Pagamento via conta') || cleanLine.includes('Total dos pagamentos')) {
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
+
+      // Ignora trechos de pagamentos e resumo da fatura
+      if (line.includes('Pagamento via conta') || line.includes('Total dos pagamentos')) {
         continue;
       }
 
-      const match = cleanLine.match(regexTransacao);
-      if (match) {
-        const [_, data, descricao, valorStr] = match;
-        
-        // Trata valores no formato brasileiro (ex: 1.250,50 -> 1250.50)
-        let formattedValor = valorStr;
-        if (formattedValor.includes(',') && formattedValor.includes('.')) {
-          formattedValor = formattedValor.replace('.', '').replace(',', '.');
-        } else if (formattedValor.includes(',')) {
-          formattedValor = formattedValor.replace(',', '.');
+      // Procura por linhas que começam com data DD/MM
+      if (regexData.test(line)) {
+        const data = line;
+        let descricao = '';
+        let valor = 0;
+
+        // Procura a descrição e o valor nas linhas subsequentes
+        for (let j = i + 1; j < Math.min(i + 5, lines.length); j++) {
+          const nextLine = lines[j];
+
+          // Se encontrou o valor em R$
+          if (regexValor.test(nextLine) && !descricao) {
+            let valorClean = nextLine;
+            if (valorClean.includes(',') && valorClean.includes('.')) {
+              valorClean = valorClean.replace('.', '').replace(',', '.');
+            } else if (valorClean.includes(',')) {
+              valorClean = valorClean.replace(',', '.');
+            }
+            
+            const parsedVal = parseFloat(valorClean);
+            if (!isNaN(parsedVal) && parsedVal > 0) {
+              valor = parsedVal;
+            }
+          } 
+          // Se não for outra data nem valor, é o nome do estabelecimento
+          else if (!regexData.test(nextLine) && !regexValor.test(nextLine) && !descricao) {
+            if (!nextLine.includes('supermercado') && !nextLine.includes('restaurante') && !nextLine.includes('transporte') && !nextLine.includes('outros') && !nextLine.includes('saúde') && !nextLine.includes('serviços') && !nextLine.includes('lazer')) {
+              descricao = nextLine;
+            }
+          }
         }
 
-        const valor = parseFloat(formattedValor);
-
-        if (!isNaN(valor) && valor > 0) {
+        if (data && valor > 0) {
           transacoes.push({
             data,
-            descricao: descricao.trim(),
+            descricao: descricao || 'Lançamento Cartão',
             valor,
           });
         }
