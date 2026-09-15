@@ -1,5 +1,5 @@
 import { NextResponse } from 'next/server';
-import PDFParser from 'pdf2json';
+import pdfParse from 'pdf-parse';
 
 export const runtime = 'nodejs';
 
@@ -12,80 +12,64 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: 'Nenhum arquivo enviado' }, { status: 400 });
     }
 
-    const buffer = Buffer.from(await file.arrayBuffer());
+    const arrayBuffer = await file.arrayBuffer();
+    const buffer = Buffer.from(arrayBuffer);
 
-    const parsedData = await new Promise<any>((resolve, reject) => {
-      const pdfParser = new (PDFParser as any)();
-      pdfParser.on('pdfParser_dataError', (errData: any) => reject(errData.parserError));
-      pdfParser.parseBuffer(buffer);
-      pdfParser.on('pdfParser_dataReady', (pdfData: any) => resolve(pdfData));
-    });
+    // Renderiza o texto mantendo a estrutura nativa
+    const pdfData = await pdfParse(buffer);
+    const text = pdfData.text || '';
+
+    if (!text.trim()) {
+      return NextResponse.json({ error: 'Nenhum texto foi encontrado no PDF.' }, { status: 400 });
+    }
+
+    const lines = text
+      .split(/\r?\n/)
+      .map((l) => l.trim())
+      .filter(Boolean);
 
     const transacoes: Array<{ data: string; descricao: string; valor: number }> = [];
 
-    // Mapeia todas as paginas do PDF
-    for (const page of parsedData.Pages) {
-      const rows: { [key: number]: Array<{ x: number; text: string }> } = {};
+    // Regex flexível: Data DD/MM + Descrição + Valor (aceita sinal de - e sufixo de estorno)
+    const regexTransacao = /(\d{2}\/\d{2})\s+(.+?)\s+(-?\s*[\d\.]+\,\d{2}\s*-?)$/;
 
-      // Agrupa blocos de texto por coordenada Y (mesma linha visual)
-      for (const t of page.Texts) {
-        const y = Math.round(t.y * 4) / 4; // Tolerancia de alinhamento
-        let textStr = '';
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i];
 
-        try {
-          textStr = decodeURIComponent(t.R[0].T).trim();
-        } catch {
-          textStr = t.R[0].T.trim();
-        }
-
-        if (!textStr) continue;
-
-        if (!rows[y]) {
-          rows[y] = [];
-        }
-        rows[y].push({ x: t.x, text: textStr });
+      // Ignora cabecalhos e linhas de saldo anterior / pagamentos efetuados
+      if (
+        line.includes('Pagamento via conta') ||
+        line.includes('Total dos pagamentos') ||
+        line.includes('PAGAMENTO EFETUADO') ||
+        line.includes('RESUMO DA FATURA') ||
+        line.includes('Vencimento') ||
+        line.includes('Total desta fatura') ||
+        line.includes('SALDO ANTERIOR') ||
+        line.includes('ESTABELECIMENTO')
+      ) {
+        continue;
       }
 
-      // Processa linha por linha da esquerda para a direita
-      const sortedY = Object.keys(rows).map(Number).sort((a, b) => a - b);
+      const match = line.match(regexTransacao);
 
-      for (const y of sortedY) {
-        const rowItems = rows[y].sort((a, b) => a.x - b.x);
-        const lineText = rowItems.map((item) => item.text).join(' ');
+      if (match) {
+        const [_, data, desc, valorStr] = match;
 
-        // Ignora pagamentos de fatura anterior e cabecalhos do Itau
-        if (
-          lineText.includes('Pagamento via conta') ||
-          lineText.includes('Total dos pagamentos') ||
-          lineText.includes('PAGAMENTO EFETUADO') ||
-          lineText.includes('RESUMO DA FATURA') ||
-          lineText.includes('ESTABELECIMENTO') ||
-          lineText.includes('SALDO ANTERIOR')
-        ) {
-          continue;
-        }
+        // Identifica estorno/crédito
+        const isNegative = valorStr.includes('-');
+        let cleanVal = valorStr.replace('-', '').replace(/\./g, '').replace(',', '.').trim();
+        let valor = parseFloat(cleanVal);
 
-        // Procura: [DD/MM] [NOME LOJA] [VALOR (ex: 120,50 ou -120,50)]
-        const match = lineText.match(/^(\d{2}\/\d{2})\s+(.+?)\s+(-?\s*[\d\.]+\,\d{2}\s*-?)$/);
-
-        if (match) {
-          const [_, data, desc, valorStr] = match;
-
-          const isNegative = valorStr.includes('-');
-          let cleanVal = valorStr.replace('-', '').replace(/\./g, '').replace(',', '.').trim();
-          let valor = parseFloat(cleanVal);
-
-          if (!isNaN(valor) && valor > 0 && desc.length > 1) {
-            if (isNegative) {
-              valor = -Math.abs(valor);
-            }
-
-            transacoes.push({
-              data,
-              descricao: desc.trim(),
-              valor,
-            });
+        if (!isNaN(valor) && valor > 0 && desc.trim().length > 1) {
+          if (isNegative) {
+            valor = -Math.abs(valor);
           }
+
+          transacoes.push({
+            data,
+            descricao: desc.trim(),
+            valor,
+          });
         }
       }
     }
