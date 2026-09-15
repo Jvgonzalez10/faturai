@@ -28,78 +28,76 @@ export async function POST(request: Request) {
       .filter(Boolean);
 
     const transacaoLista: Array<{ data: string; descricao: string; valor: number }> = [];
-
     let totalFaturaOficial = 0;
-    let totalEncargos = 0;
-    let dentroDoExtrato = false;
+    let dentroProximasFaturas = false;
 
-    // Regex para captura de lancamentos com parcelas isoladas
-    const regexLinhaComParcela = /^(\d{2}\/\d{2})(.*?)(?:(\d{2}\/\d{2}))?\s*(-?\s*[\d\.]+\,\d{2})$/;
+    // 1. CAPTURA DO TOTAL OFICIAL DA FATURA
+    for (const line of lines) {
+      const lineNorm = line.replace(/\s+/g, ' ').toUpperCase();
+      if (lineNorm.includes('TOTAL DESTA FATURA') || lineNorm.includes('O TOTAL DA SUA FATURA')) {
+        const matchVal = line.match(/([\d\.]+[,\.]\d{2})/);
+        if (matchVal) {
+          let rawVal = matchVal[1];
+          if (rawVal.includes(',')) {
+            rawVal = rawVal.replace(/\./g, '').replace(',', '.');
+          } else {
+            const parts = rawVal.split('.');
+            if (parts.length > 2) {
+              const dec = parts.pop();
+              rawVal = parts.join('') + '.' + dec;
+            }
+          }
+          const parsed = parseFloat(rawVal);
+          if (!isNaN(parsed) && parsed > 0) {
+            totalFaturaOficial = parsed;
+            break;
+          }
+        }
+      }
+    }
+
+    // 2. REGEX DE TRANSAÇÃO (Suporta valores positivos, negativos e parcelas)
+    const regexTransacao = /^(\d{2}\/\d{2})\s*(.*?)(?:(\d{2}\/\d{2}))?\s*(-?\s*[\d\.]+[,\.]\d{2})$/;
 
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i];
+      const lineNorm = line.replace(/\s+/g, '').toUpperCase();
+
+      // Ignora a seção de "Próximas Faturas" para não duplicar parcelas futuras
+      if (
+        lineNorm.includes('PRÓXIMASFATURAS') ||
+        lineNorm.includes('PROXIMASFATURAS') ||
+        lineNorm.includes('LIMITESDECRÉDITO') ||
+        lineNorm.includes('ENCARGOSCOBRADOS')
+      ) {
+        dentroProximasFaturas = true;
+      }
+
+      if (
+        lineNorm.includes('LANÇAMENTOS:') ||
+        lineNorm.includes('LANCAMENTOS:') ||
+        lineNorm.includes('LANÇAMENTOS')
+      ) {
+        dentroProximasFaturas = false;
+      }
+
+      if (dentroProximasFaturas) continue;
+
+      // Filtra pagamentos efetuados e subtotais
       const lineUpper = line.toUpperCase();
-
-      // 1. CAPTURA DOS TOTALIZADORES DO CABEÇALHO DO ITAÚ
-      if (lineUpper.includes('TOTAL DESTA FATURA') || lineUpper.includes('O TOTAL DA SUA FATURA É:')) {
-        const matchVal = line.match(/([\d\.]+\,\d{2})/);
-        if (matchVal) {
-          totalFaturaOficial = parseFloat(matchVal[1].replace(/\./g, '').replace(',', '.'));
-        }
-      }
-
-      if (lineUpper.includes('ENCARGOS (FINANCIAMENTO + MORATÓRIO)')) {
-        const matchVal = line.match(/([\d\.]+\,\d{2})/);
-        if (matchVal) {
-          totalEncargos = parseFloat(matchVal[1].replace(/\./g, '').replace(',', '.'));
-        }
-      }
-
-      // 2. CONTROLE DE ENTRADA E SAÍDA DO EXTRATO
       if (
-        lineUpper.includes('LANÇAMENTOS: COMPRAS E SAQUES') ||
-        lineUpper.includes('LANCAMENTOS: COMPRAS E SAQUES') ||
-        lineUpper.includes('LANÇAMENTOS: PRODUTOS E SERVIÇOS')
-      ) {
-        dentroDoExtrato = true;
-        continue;
-      }
-
-      if (
-        lineUpper.includes('COMPRAS PARCELADAS') ||
-        lineUpper.includes('LIMITES DE CRÉDITO') ||
-        lineUpper.includes('ENCARGOS COBRADOS')
-      ) {
-        dentroDoExtrato = false;
-      }
-
-      if (!dentroDoExtrato) continue;
-
-      // 3. FILTRA CABEÇALHOS E CATEGORIAS
-      if (
-        lineUpper.startsWith('TRANSPORTE') ||
-        lineUpper.startsWith('RESTAURANTE') ||
-        lineUpper.startsWith('SUPERMERCADO') ||
-        lineUpper.startsWith('SAÚDE') ||
-        lineUpper.startsWith('SAUDE') ||
-        lineUpper.startsWith('EDUCACAO') ||
-        lineUpper.startsWith('EDUCAÇÃO') ||
-        lineUpper.startsWith('OUTROS') ||
-        lineUpper.startsWith('LAZER') ||
-        lineUpper.startsWith('SERVIÇOS') ||
-        lineUpper.startsWith('SERVICOS') ||
-        lineUpper.startsWith('CASA') ||
-        lineUpper.startsWith('VESTUÁRIO') ||
-        lineUpper.startsWith('VESTUARIO') ||
-        lineUpper.startsWith('DATAESTABELECIMENTO') ||
         lineUpper.includes('PAGAMENTO VIA CONTA') ||
-        lineUpper.includes('TOTAL DOS PAGAMENTOS')
+        lineUpper.includes('PAGAMENTO -') ||
+        lineUpper.startsWith('PAGAMENTO') ||
+        lineUpper.includes('TOTAL DOS PAGAMENTOS') ||
+        lineUpper.includes('LANÇAMENTOS NO CARTÃO') ||
+        lineUpper.includes('TOTAL DOS LANÇAMENTOS') ||
+        lineUpper.startsWith('ESTABELECIMENTO')
       ) {
         continue;
       }
 
-      // 4. EXTRAÇÃO DOS LANÇAMENTOS
-      const match = line.match(regexLinhaComParcela);
+      const match = line.match(regexTransacao);
 
       if (match) {
         const data = match[1];
@@ -117,7 +115,7 @@ export async function POST(request: Request) {
         let cleanVal = valorStr.replace('-', '').replace(/\./g, '').replace(',', '.').trim();
         let valor = parseFloat(cleanVal);
 
-        if (!isNaN(valor) && valor > 0 && valor < 50000) {
+        if (!isNaN(valor) && valor !== 0 && Math.abs(valor) < 50000) {
           if (isNegative) valor = -Math.abs(valor);
 
           transacaoLista.push({
@@ -129,21 +127,11 @@ export async function POST(request: Request) {
       }
     }
 
-    // Adiciona os encargos como um item financeiro caso existam
-    if (totalEncargos > 0) {
-      transacaoLista.push({
-        data: '03/09',
-        descricao: 'ENCARGOS (JUROS / MULTA / IOF)',
-        valor: totalEncargos,
-      });
-    }
-
-    const somaTotalCalculada = transacaoLista.reduce((acc, item) => acc + item.valor, 0);
+    const somaCalculada = transacaoLista.reduce((acc, item) => acc + item.valor, 0);
 
     return NextResponse.json({
       success: true,
-      totalFatura: totalFaturaOficial || somaTotalCalculada,
-      totalEncargos,
+      totalFatura: totalFaturaOficial || somaCalculada,
       count: transacaoLista.length,
       dados: transacaoLista,
     });
