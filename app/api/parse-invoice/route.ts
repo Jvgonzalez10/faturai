@@ -29,8 +29,8 @@ export async function POST(request: Request) {
 
     const transacaoLista: Array<{ data: string; descricao: string; valor: number }> = [];
 
-    // Exige estritamente: Data no inicio (DD/MM), Texto do estabelecimento no meio e Valor no fim
-    const regexLinhaTransacao = /^(\d{2}\/\d{2})\s+(.+?)\s+(-?\s*[\d\.]+\,\d{2}\s*-?)$/;
+    // Captura data no inicio (DD/MM), estabelecimento no meio e valor no fim
+    const regexLancamento = /^(\d{2}\/\d{2})\s+(.+?)\s+(-?\s*[\d\.]+\,\d{2}\s*-?)$/;
 
     let dentroDoExtrato = false;
 
@@ -38,24 +38,26 @@ export async function POST(request: Request) {
       const line = lines[i];
       const lineUpper = line.toUpperCase();
 
-      // 1. ANCORA DE INICIO: Entra no extrato no cabecalho
+      // 1. REATIVADOR DE LEITURA: Reativa sempre que encontra novo bloco de lancamentos
       if (
         lineUpper.includes('LANÇAMENTOS: COMPRAS E SAQUES') ||
         lineUpper.includes('LANCAMENTOS: COMPRAS E SAQUES') ||
-        lineUpper.includes('LANÇAMENTOS: PRODUTOS E SERVIÇOS')
+        lineUpper.includes('LANÇAMENTOS: PRODUTOS E SERVIÇOS') ||
+        lineUpper.includes('LANÇAMENTOS DO CARTÃO') ||
+        lineUpper.includes('LANÇAMENTOS PRODUTOS E SERVIÇOS')
       ) {
         dentroDoExtrato = true;
         continue;
       }
 
-      // 2. ANCORA DE FIM: Corta a leitura antes das tabelas auxiliares
+      // 2. CORTE DEFINITIVO: Desliga a leitura apenas quando atinge as tabelas de resumo e limites do final do PDF
       if (
-        lineUpper.includes('COMPRAS PARCELADAS') ||
+        lineUpper.includes('COMPRAS PARCELADAS - PRÓXIMAS FATURAS') ||
+        lineUpper.includes('COMPRAS PARCELADAS - PROXIMAS FATURAS') ||
         lineUpper.includes('LIMITES DE CRÉDITO') ||
-        lineUpper.includes('ENCARGOS COBRADOS') ||
-        lineUpper.includes('OUTRA OPÇÃO DE PAGAMENTO') ||
-        lineUpper.includes('PARCELAS FIXAS') ||
-        lineUpper.includes('CASO VOCÊ PAGUE')
+        lineUpper.includes('NOVO TETO DE JUROS DO CARTÃO') ||
+        lineUpper.includes('AUTENTICAÇÃO MECÂNICA') ||
+        lineUpper.includes('FICHA DE COMPENSAÇÃO')
       ) {
         dentroDoExtrato = false;
       }
@@ -64,12 +66,10 @@ export async function POST(request: Request) {
         continue;
       }
 
-      // 3. FILTROS DE CABEÇALHO E TOTALIZADORES
+      // 3. DESCARTE DE CABEÇALHOS E LINHAS INSTITUCIONAIS DA TABELA
       if (
         lineUpper.includes('PAGAMENTO VIA CONTA') ||
         lineUpper.includes('TOTAL DOS PAGAMENTOS') ||
-        lineUpper.includes('LANÇAMENTOS NO CARTÃO') ||
-        lineUpper.includes('LANÇAMENTOS PRODUTOS E SERVIÇOS') ||
         lineUpper.includes('TOTAL DOS LANÇAMENTOS ATUAIS') ||
         lineUpper.includes('ESTABELECIMENTO') ||
         lineUpper.includes('PRODUTOS/SERVIÇOS') ||
@@ -79,39 +79,54 @@ export async function POST(request: Request) {
         continue;
       }
 
-      // 4. VALIDACAO E EXTRAÇÃO ESTRITA
-      const match = line.match(regexLinhaTransacao);
+      // 4. EXTRAÇÃO DA LINHA
+      const match = line.match(regexLancamento);
 
       if (match) {
         const data = match[1];
         let desc = match[2].trim();
         const valorStr = match[3];
 
-        // Filtro de palavras do sistema/explicativas do Itau
-        const descUpper = desc.toUpperCase();
+        // Ignora sublinhas de categoria do Itaú (ex: "transporte Sao Paulo", "supermercado RIO DE JANEIR")
         if (
-          descUpper.includes('PRINCIPAL (') ||
-          descUpper.includes('JUROS (') ||
-          descUpper.includes('VALOR EM') ||
-          descUpper.includes('PREVISÃO') ||
-          descUpper.includes('SUBTOTAL') ||
-          desc.length < 2
+          desc.toLowerCase().startsWith('transporte') ||
+          desc.toLowerCase().startsWith('restaurante') ||
+          desc.toLowerCase().startsWith('supermercado') ||
+          desc.toLowerCase().startsWith('saúde') ||
+          desc.toLowerCase().startsWith('educacao') ||
+          desc.toLowerCase().startsWith('outros') ||
+          desc.toLowerCase().startsWith('lazer') ||
+          desc.toLowerCase().startsWith('serviços') ||
+          desc.toLowerCase().startsWith('casa') ||
+          desc.toLowerCase().startsWith('vestuário')
         ) {
           continue;
         }
 
-        // Limpeza do nome do estabelecimento
+        // Descarta textos explicativos do parcelamento PIX e Financiamento
+        const descUpper = desc.toUpperCase();
+        if (
+          descUpper.includes('PRINCIPAL (') ||
+          descUpper.includes('JUROS (') ||
+          descUpper.includes('VALOR EM')
+        ) {
+          continue;
+        }
+
+        // Limpeza de marca
         desc = desc
           .replace(/-topaz/gi, '')
           .replace(/topaz/gi, '')
           .replace(/R\$/g, '')
           .trim();
 
+        if (desc.length < 2) continue;
+
         const isNegative = valorStr.includes('-');
         let cleanVal = valorStr.replace('-', '').replace(/\./g, '').replace(',', '.').trim();
         let valor = parseFloat(cleanVal);
 
-        if (!isNaN(valor) && valor > 0) {
+        if (!isNaN(valor) && valor > 0 && valor < 5000) {
           if (isNegative) {
             valor = -Math.abs(valor);
           }
