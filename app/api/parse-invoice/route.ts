@@ -23,16 +23,23 @@ export async function POST(request: Request) {
 
     const transacoes: Array<{ data: string; descricao: string; valor: number }> = [];
 
-    // Percorre cada pagina do PDF
+    // Processa pagina por pagina
     for (const page of parsedData.Pages) {
-      const texts = page.Texts;
-      
-      // Agrupa os elementos de texto pela posicao Y (mesma linha visual)
+      // Objeto para agrupar textos pelo alinhamento vertical (Y)
       const rows: { [key: number]: Array<{ x: number; text: string }> } = {};
 
-      for (const t of texts) {
-        const y = Math.round(t.y * 10) / 10; // Arredonda coordenada Y
-        const textStr = decodeURIComponent(t.R[0].T).trim();
+      for (const t of page.Texts) {
+        // Tolerancia de alinhamento vertical (arredonda Y para agrupar itens da mesma linha)
+        const y = Math.round(t.y * 5) / 5;
+        
+        let textStr = '';
+        try {
+          textStr = decodeURIComponent(t.R[0].T).trim();
+        } catch {
+          textStr = t.R[0].T.trim();
+        }
+
+        if (!textStr) continue;
 
         if (!rows[y]) {
           rows[y] = [];
@@ -40,41 +47,40 @@ export async function POST(request: Request) {
         rows[y].push({ x: t.x, text: textStr });
       }
 
-      // Processa cada linha visual
-      for (const yKey of Object.keys(rows)) {
-        const rowItems = rows[Number(yKey)].sort((a, b) => a.x - b.x);
-        const fullLine = rowItems.map((item) => item.text).join(' ');
+      // Ordena cada linha da esquerda para a direita (coordenada X)
+      const sortedY = Object.keys(rows).map(Number).sort((a, b) => a - b);
 
-        // Ignora pagamentos de fatura anteriores e resumos
-        if (fullLine.includes('Pagamento via conta') || fullLine.includes('Total dos pagamentos')) {
+      for (const y of sortedY) {
+        const rowItems = rows[y].sort((a, b) => a.x - b.x);
+        const lineText = rowItems.map((item) => item.text).join(' ');
+
+        // Ignora resumos, limites e pagamentos
+        if (
+          lineText.includes('Pagamento via conta') ||
+          lineText.includes('Total dos pagamentos') ||
+          lineText.includes('ESTABELECIMENTO') ||
+          lineText.includes('Lançamentos')
+        ) {
           continue;
         }
 
-        // Procura por padrão: Data (DD/MM) + Descrição + Valor (ex: 12/08 SUHAI SEGURO 189,72)
-        const match = fullLine.match(/^(\d{2}\/\d{2})\s+(.+?)\s+([\d\.,]+)$/);
+        // Busca padroes do Itau: [Data DD/MM] [Estabelecimento] [Valor ex: 189,72]
+        const match = lineText.match(/^(\d{2}\/\d{2})\s+(.+?)\s+([\d\.,]+)$/);
 
         if (match) {
           const [_, data, descricao, valorStr] = match;
 
-          // Filtra palavras-chave do cabeçalho do Itaú
-          if (
-            descricao.includes('ESTABELECIMENTO') ||
-            descricao.includes('VALOR') ||
-            descricao.includes('Lançamentos')
-          ) {
-            continue;
+          // Limpa formatação monetária brasileira
+          let cleanVal = valorStr;
+          if (cleanVal.includes(',') && cleanVal.includes('.')) {
+            cleanVal = cleanVal.replace(/\./g, '').replace(',', '.');
+          } else if (cleanVal.includes(',')) {
+            cleanVal = cleanVal.replace(',', '.');
           }
 
-          let valorClean = valorStr;
-          if (valorClean.includes(',') && valorClean.includes('.')) {
-            valorClean = valorClean.replace('.', '').replace(',', '.');
-          } else if (valorClean.includes(',')) {
-            valorClean = valorClean.replace(',', '.');
-          }
+          const valor = parseFloat(cleanVal);
 
-          const valor = parseFloat(valorClean);
-
-          if (!isNaN(valor) && valor > 0) {
+          if (!isNaN(valor) && valor > 0 && descricao.length > 2) {
             transacoes.push({
               data,
               descricao: descricao.trim(),
@@ -85,7 +91,11 @@ export async function POST(request: Request) {
       }
     }
 
-    return NextResponse.json({ success: true, count: transacoes.length, dados: transacoes });
+    return NextResponse.json({
+      success: true,
+      count: transacoes.length,
+      dados: transacoes,
+    });
   } catch (error) {
     console.error('Erro ao processar PDF:', error);
     return NextResponse.json({ error: 'Erro ao processar o arquivo da fatura' }, { status: 500 });
