@@ -1,5 +1,5 @@
 export const metadata = {
-  title: 'FaturAi — Gestão Inteligente de Faturas',
+  title: 'FaturAiCard — Gestão Inteligente de Faturas',
   description: 'Contabilize e analise seus gastos de cartão de crédito em segundos.',
 };
 
